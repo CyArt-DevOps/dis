@@ -1,141 +1,93 @@
-# Deploying the bot (Hostinger VPS / any Ubuntu VPS)
+# Deployment — MonkeyBytes + Cloudflare
 
-The bot needs a machine that stays on 24/7 with a persistent disk. **Shared web
-hosting (Hostinger "Business Web Hosting", cPanel, etc.) will NOT work** — it
-kills background processes and has no Docker. Use a **VPS** (Hostinger KVM VPS,
-or any Ubuntu 22.04+ VPS).
+Production target for the CyArt intern bot and its dashboard.
 
-The SQLite database is a file at `data/app.db`. Docker keeps it on a mounted
-volume so it survives restarts and redeploys.
+| Piece | Value |
+|---|---|
+| Panel | https://dash.monkey-network.xyz · server **Intern Bot** (`18955455`) |
+| Allocation | `us.monkey-network.xyz:5015` (1 of 1) |
+| Repo | `https://github.com/CyArt-DevOps/dis` (private, branch `main`) |
+| Runtime | Pterodactyl Node.js egg, Docker image **Nodejs 25** |
+| Dashboard URL | https://dis.cyart.io |
 
----
+## How it fits together
 
-## 1. Create the VPS
+The panel runs `npm install --production` and then `node dist/index.js` — it
+never runs `npm start`. Three consequences drive the setup:
 
-- Hostinger → **VPS** → pick a KVM plan (KVM 1 is plenty) → OS template
-  **Ubuntu 22.04** (or "Ubuntu 24.04 with Docker" if offered — skips step 3).
-- Note the server IP and root password (or add your SSH key).
+1. **`dist/` and `webui/dist` are committed.** `--production` omits typescript
+   and vite, so the host cannot build. Run `npm run build && npm run build:ui`
+   locally and commit the output with every change.
+2. **`prisma` is a runtime dependency**, not a dev one, so `postinstall` can run
+   `prisma generate` on the host.
+3. **Migrations run at boot**, from `applyMigrations()` in `src/index.ts`, which
+   is the only hook that executes with `.env` loaded.
 
-## 2. Connect
+The bot process also serves the dashboard (`startDashboard()` on ClientReady),
+so one process covers both and fits the single allocated port.
 
-```bash
-ssh root@YOUR_SERVER_IP
-```
+## Cloudflare (done)
 
-## 3. Install Docker (skip if you chose a Docker template)
+- `dis.cyart.io` → **CNAME** → `usa.monkey-network.xyz`, **Proxied**
+- Configuration Rule *"dis.cyart.io - SSL Full for MonkeyBytes origin"*:
+  `http.host eq "dis.cyart.io"` → SSL: **Full**
 
-```bash
-curl -fsSL https://get.docker.com | sh
-```
+The zone stays on **Full (strict)**; only this hostname is relaxed to Full, which
+is what MonkeyBytes requires. Do not change the zone-wide mode — the other eight
+cyart.io hostnames rely on strict validation.
 
-Verify: `docker --version` and `docker compose version`.
+## Panel (done)
 
-## 4. Get the code onto the server
+Startup → `GIT REPO ADDRESS` = repo URL, `INSTALL BRANCH` = `main`,
+`MAIN FILE` = `dist/index.js`, `AUTO UPDATE` = on, `USER UPLOADED FILES` = off.
+Whitelabel → `dis.cyart.io` on port `5015`.
 
-**Option A — git (recommended):** push this folder to a private GitHub repo, then:
+## Remaining steps (need credentials — do these yourself)
 
-```bash
-apt-get update && apt-get install -y git
-git clone https://github.com/<you>/<repo>.git bot
-cd bot
-```
+1. **Git credentials.** Startup tab → `GIT USERNAME` = your GitHub username,
+   `GIT ACCESS TOKEN` = a PAT with `repo` scope
+   (https://github.com/settings/tokens). The repo is private; the clone fails
+   without it.
+2. **Install.** Settings → Reinstall Server. This clones the repo and runs
+   `npm install --production`.
+3. **`.env`.** Files tab → New File named `.env`, using `.env.example` as the
+   shape. For production it must contain:
 
-**Option B — direct copy (from your Windows machine):**
+   ```
+   DISCORD_TOKEN=<the bot token>
+   DISCORD_CLIENT_ID=1491834973416591370
+   DISCORD_GUILD_ID=1520702519049982042
+   DATABASE_URL=file:./data/app.db?connection_limit=1&socket_timeout=20
+   WEB_HOST=0.0.0.0
+   WEB_PASSWORD=<a strong password, 8+ chars>
+   WEB_SECURE_COOKIE=1
+   NODE_ENV=production
+   ```
 
-```bash
-# run locally, in the project folder
-scp -r ./* root@YOUR_SERVER_IP:/root/bot/
-```
+   `WEB_HOST=0.0.0.0` is what makes the dashboard reachable; without
+   `WEB_PASSWORD` it refuses to start rather than serve member data unguarded.
+4. **Database.** Upload the local `prisma/data/app.db` (~15 MB) to
+   `prisma/data/app.db` on the server, with the bot **stopped** at both ends.
+   It holds every member, meeting, attendance and leave record — starting
+   without it gives an empty bot.
+5. **Start**, then watch Console for `Attendance dashboard listening` with
+   `authenticated: true`, and visit https://dis.cyart.io.
 
-(Do NOT copy `node_modules`, `dist`, or `.env` into git; `.dockerignore`
-already excludes them for the image build.)
+## Important
 
-## 5. Create the .env on the server
+- **One bot at a time.** Stop the local `npm run dev` before starting the host,
+  or two processes answer every interaction and both write to their own copy of
+  the database.
+- The database becomes authoritative **on the server** once it runs there. Local
+  runs after that point diverge; pull a fresh copy down before working locally.
+- Renewal bytes: the server costs 1 byte per cycle. If the balance runs out the
+  bot stops. Check the panel's Bytes page periodically.
 
-```bash
-cd /root/bot
-nano .env
-```
-
-Paste (use your **rotated** token — never the one shared in chat):
-
-```
-DISCORD_TOKEN=your-new-bot-token
-DISCORD_CLIENT_ID=1491834973416591370
-DISCORD_GUILD_ID=1520702519049982042
-DATABASE_URL=file:./data/app.db
-NODE_ENV=production
-LOG_LEVEL=info
-# optional web dashboard
-WEB_TOKEN=some-long-random-string
-```
-
-Save (Ctrl-O, Enter, Ctrl-X).
-
-## 6. Start it
-
-```bash
-docker compose up -d --build
-```
-
-- `--build` compiles TypeScript inside the image.
-- On start the container runs `prisma migrate deploy` (creates/updates the DB) then launches the bot.
-- `-d` = detached (keeps running after you log out).
-
-Check it's alive:
-
-```bash
-docker compose logs -f          # follow logs; look for "Bot ready"
-docker compose ps               # STATUS should be "running"
-```
-
-## 7. First-time server setup (once)
-
-Register slash commands + build the Discord structure. Run these inside the container:
+## Updating
 
 ```bash
-docker compose exec bot npx tsx scripts/register-commands.ts
-docker compose exec bot npx tsx scripts/build-server.ts
+npm run build && npm run build:ui
+git add -A && git commit -m "..." && git push
 ```
 
-> If `tsx` isn't in the production image, run them from a dev copy, or
-> temporarily `docker compose exec bot sh` and use `node dist/...`.
-> Alternatively run `npm run register` / `npm run build:server` once from your
-> local machine (they only talk to Discord's API, not the server's DB) —
-> simplest. In Discord you can also just run `/setup` as the owner.
-
-## 8. It now runs 24/7
-
-- Survives reboots: `restart: unless-stopped` is set in `docker-compose.yml`.
-- **Update later:**
-  ```bash
-  cd /root/bot && git pull        # (or re-scp)
-  docker compose up -d --build
-  ```
-- **Stop:** `docker compose down`  · **Logs:** `docker compose logs -f`
-
-## 9. Back up the database
-
-The whole DB is one file. Copy it off the server on a schedule:
-
-```bash
-# from your local machine
-scp root@YOUR_SERVER_IP:/root/bot/data/app.db ./backup-$(date +%F).db
-```
-
-Or a cron on the VPS that copies `data/app.db` to a dated file / cloud storage.
-
-## 10. (Optional) Web dashboard
-
-The dashboard is a separate process. To expose it, add a service to
-`docker-compose.yml` running `npm run web`, publish port `8090`, and put it
-behind the firewall or a reverse proxy. Only enable if you set a strong
-`WEB_TOKEN`. For most users the Discord `/attendance` commands are enough — skip this.
-
----
-
-### If you only have shared hosting (no VPS)
-
-You cannot run this bot there. Cheapest fixes:
-1. Add a Hostinger **KVM VPS** (~$5/mo) and follow the steps above.
-2. Or use a free always-on VM (Oracle Cloud Free Tier) — same Docker flow.
+Then restart the server in the panel — `AUTO UPDATE` pulls `main` on boot.
