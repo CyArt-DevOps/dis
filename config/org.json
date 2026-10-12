@@ -1,0 +1,248 @@
+{
+  "batches": [
+    "Batch 2025",
+    "Batch 2026"
+  ],
+  "projects": [
+    {
+      "key": "ai-siem",
+      "name": "AI SIEM",
+      "modules": 0,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "chain-discovery",
+      "name": "Chain Discovery",
+      "modules": 0,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "ctem",
+      "name": "CTEM",
+      "modules": 0,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "df-ir",
+      "name": "DF-IR",
+      "modules": 0,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "cybreach",
+      "name": "CyBreach",
+      "modules": 5,
+      "podsPerModule": 4,
+      "active": true,
+      "moduleNames": {
+        "5": "Team Velocity"
+      },
+      "moduleChannels": false,
+      "moduleVoice": true
+    },
+    {
+      "key": "cygrc",
+      "name": "CyGRC",
+      "modules": 2,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "aev",
+      "name": "AEV",
+      "modules": 4,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "epit",
+      "name": "ETIP",
+      "modules": 0,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "digital-twin",
+      "name": "Digital Twin",
+      "modules": 0,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "grc-20",
+      "name": "GRC 2",
+      "modules": 2,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "tele-scan",
+      "name": "TeleScan",
+      "modules": 2,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "silentmesh",
+      "name": "Silent Mesh",
+      "modules": 0,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "truth-shield",
+      "name": "TruthShield",
+      "modules": 2,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "orthy",
+      "name": "Orthy",
+      "modules": 0,
+      "podsPerModule": 0,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "key": "darktrace",
+      "name": "DarkTrace",
+      "modules": 2,
+      "podsPerModule": 4,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": true
+    },
+    {
+      "key": "opencomm",
+      "name": "Open Comm",
+      "modules": 2,
+      "podsPerModule": 3,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": true
+    },
+    {
+      "key": "agentic-sec",
+      "name": "CyAgen",
+      "modules": 2,
+      "podsPerModule": 4,
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
+    },
+    {
+      "moduleChannels": false,
+      "moduleVoice": false,
+      "key": "Op-Sour",
+      "name": "Op Sour",
+      "modules": 2,
+      "podsPerModule": 10,
+      "active": true
+    }
+  ],
+  "nicknameFormat": "{fullName} | {project}",
+  "timezone": "Asia/Kolkata",
+  "roles": {
+    "admin": [
+      "Founder",
+      "Manager",
+      "HR"
+    ],
+    "leadership": [
+      "Team Lead",
+      "Co-Lead"
+    ],
+    "intern": "Intern"
+  },
+  "categories": {
+    "information": {
+      "name": "INFORMATION",
+      "channels": [
+        "welcome",
+        "rules",
+        "announcements",
+        "intern-guide",
+        "faq"
+      ]
+    },
+    "hr": {
+      "name": "HR",
+      "channels": [
+        "hr-help",
+        "leave-request",
+        "documents"
+      ]
+    },
+    "managerOffice": {
+      "name": "MANAGER OFFICE",
+      "textChannels": [
+        "manager-office"
+      ],
+      "voiceChannels": [
+        "Manager Office"
+      ]
+    },
+    "hrOffice": {
+      "name": "HR OFFICE",
+      "textChannels": [
+        "hr-office"
+      ],
+      "voiceChannels": [
+        "HR Office"
+      ]
+    },
+    "tickets": {
+      "name": "TICKETS"
+    },
+    "archive": {
+      "name": "ARCHIVE"
+    },
+    "logs": {
+      "name": "LOGS"
+    }
+  },
+  "attendancePolicy": {
+    "windowStart": "11:30",
+    "loginBy": "14:00",
+    "windowEnd": "17:30",
+    "minHours": 5.5,
+    "workdays": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "trackingStartsOn": "2026-06-01"
+  }
+}

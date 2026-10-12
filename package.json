@@ -1,0 +1,54 @@
+{
+  "name": "intern-org-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Enterprise Discord management system for intern organization (500-1000+ members).",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "prisma migrate deploy && node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "register": "tsx scripts/register-commands.ts",
+    "build:server": "tsx scripts/build-server.ts",
+    "fix:perms": "tsx scripts/fix-permissions.ts",
+    "dashboard": "tsx scripts/export-dashboard.ts",
+    "repair:attendance": "tsx scripts/repair-attendance.ts",
+    "resync:members": "tsx scripts/resync-members.ts",
+    "create:module-info": "tsx scripts/create-module-info.ts",
+    "clean:grc20": "tsx scripts/clean-grc20-duplicate.ts",
+    "seed:info": "tsx scripts/seed-info.ts",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate",
+    "db:studio": "prisma studio",
+    "web": "tsx src/web/main.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:ui": "npm --prefix webui run build",
+    "dev:ui": "npm --prefix webui run dev",
+    "postinstall": "prisma generate && prisma migrate deploy"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "pdfkit": "^0.19.1",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0",
+    "prisma": "^5.22.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.9.0",
+    "@types/pdfkit": "^0.17.6",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.9"
+  }
+}

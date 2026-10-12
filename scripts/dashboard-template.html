@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intern Org — Dashboards</title>
+<style>
+:root{
+  --surface-1:#fcfcfb; --page:#f9f9f7;
+  --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;
+  --grid:#e1e0d9; --baseline:#c3c2b7; --ring:rgba(11,11,11,.10);
+  --seq-450:#2a78d6; --seq-300:#6da7ec; --seq-600:#184f95;
+  --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+  --neutral:#c3c2b7;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --surface-1:#1a1a19; --page:#0d0d0d;
+    --ink-1:#ffffff; --ink-2:#c3c2b7; --ink-3:#898781;
+    --grid:#2c2c2a; --baseline:#383835; --ring:rgba(255,255,255,.10);
+    --seq-450:#3987e5; --seq-300:#5598e7; --seq-600:#184f95;
+    --neutral:#52514e;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink-1);
+  font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{padding:20px 24px 0}
+h1{font-size:20px;margin:0 0 2px}
+.sub{color:var(--ink-3);font-size:12px}
+nav{display:flex;gap:4px;padding:14px 24px 0;flex-wrap:wrap}
+nav button{border:1px solid transparent;background:none;color:var(--ink-2);
+  padding:8px 14px;border-radius:8px 8px 0 0;font:inherit;cursor:pointer}
+nav button.active{background:var(--surface-1);border-color:var(--ring);
+  border-bottom-color:var(--surface-1);color:var(--ink-1);font-weight:600}
+main{background:var(--surface-1);border-top:1px solid var(--ring);
+  min-height:70vh;padding:20px 24px 48px}
+section{display:none;max-width:1200px;margin:0 auto}
+section.active{display:block}
+h2{font-size:15px;margin:26px 0 10px}
+h2:first-child{margin-top:0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.tile{border:1px solid var(--ring);border-radius:10px;padding:12px 14px;background:var(--surface-1)}
+.tile .v{font-size:30px;font-weight:650;letter-spacing:-.02em}
+.tile .l{color:var(--ink-3);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.tile .d{font-size:12px;color:var(--ink-2);margin-top:2px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink-2);margin:8px 0 4px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.chip{width:10px;height:10px;border-radius:3px;display:inline-block}
+.chart-wrap{overflow-x:auto;border:1px solid var(--ring);border-radius:10px;padding:14px}
+svg text{font:11px system-ui,sans-serif;fill:var(--ink-3)}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th{color:var(--ink-3);font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+  text-align:left;padding:6px 10px;border-bottom:1px solid var(--baseline)}
+td{padding:6px 10px;border-bottom:1px solid var(--grid)}
+tr:hover td{background:color-mix(in srgb,var(--ink-1) 4%, transparent)}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:1px 8px;
+  border-radius:99px;border:1px solid var(--ring);color:var(--ink-2)}
+.pill .chip{width:8px;height:8px}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
+select,input[type=search]{font:inherit;color:var(--ink-1);background:var(--surface-1);
+  border:1px solid var(--baseline);border-radius:8px;padding:6px 10px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;align-items:start}
+.card{border:1px solid var(--ring);border-radius:10px;padding:12px 14px}
+.card h3{margin:0 0 8px;font-size:13px;display:flex;justify-content:space-between}
+.card h3 .n{color:var(--ink-3);font-weight:400}
+.muted{color:var(--ink-3)}
+.empty{color:var(--ink-3);font-size:13px;padding:8px 0}
+#tip{position:fixed;pointer-events:none;background:var(--ink-1);color:var(--page);
+  padding:6px 10px;border-radius:8px;font-size:12px;display:none;z-index:9;max-width:260px}
+.scroll{max-height:420px;overflow-y:auto}
+footer{color:var(--ink-3);font-size:11px;text-align:center;padding:16px}
+</style>
+</head>
+<body>
+<div id="tip"></div>
+<header>
+  <h1>Intern Org Dashboards</h1>
+  <div class="sub" id="genat"></div>
+</header>
+<nav id="tabs"></nav>
+<main>
+  <section id="tab-overview"></section>
+  <section id="tab-daily"></section>
+  <section id="tab-meetings"></section>
+  <section id="tab-members"></section>
+  <section id="tab-leave"></section>
+</main>
+<footer>Static export — regenerate with <code>npm run dashboard</code>.</footer>
+<script>
+/*__DATA__*/
+const D = window.DATA;
+const THRESH = D.thresholdSeconds;
+const nameOf = id => (D.roster.find(r=>r.id===id)||{}).name || D.members[id] || id;
+const memOf  = id => D.roster.find(r=>r.id===id) || {name:nameOf(id)};
+const fmtH = s => { const h=Math.floor(s/3600), m=Math.floor(s%3600/60); return h+"h "+String(m).padStart(2,"0")+"m"; };
+const esc = t => String(t??"").replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const scope = m => [m.project, m.module?("M"+m.module):null, m.pod?("P"+m.pod):null].filter(Boolean).join(" · ");
+const fmtDate = d => new Date(d+"T00:00:00Z").toLocaleDateString("en-GB",{day:"numeric",month:"short",timeZone:"UTC"});
+
+const STATUS = {
+  met:   {c:"var(--good)",    label:"✓ Met 5.5h"},
+  under: {c:"var(--warn)",    label:"◔ Under 5.5h"},
+  leave: {c:"var(--neutral)", label:"✈ On leave"},
+  absent:{c:"var(--crit)",    label:"✗ Absent"},
+};
+
+/* ---------- tooltip ---------- */
+const tip = document.getElementById("tip");
+function bindTips(root){
+  root.querySelectorAll("[data-tip]").forEach(el=>{
+    el.addEventListener("mousemove", e=>{
+      tip.innerHTML = el.dataset.tip; tip.style.display="block";
+      tip.style.left = Math.min(e.clientX+14, innerWidth-280)+"px";
+      tip.style.top  = (e.clientY+14)+"px";
+    });
+    el.addEventListener("mouseleave", ()=> tip.style.display="none");
+  });
+}
+
+/* ---------- charts (SVG, thin marks, 2px surface gaps, rounded ends) ---------- */
+function stackedDays(days){
+  const W=Math.max(640, days.length*44), H=210, P={t:12,b:22,l:34,r:8};
+  const max = Math.max(1, ...days.map(d=>d.met.length+d.under.length+d.leave.length+d.absent.length));
+  const ih = H-P.t-P.b, bw = 22;
+  let s = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Daily attendance, stacked by status">`;
+  for (let g=0; g<=4; g++){
+    const y = P.t + ih - ih*g/4, v = Math.round(max*g/4);
+    s += `<line x1="${P.l}" x2="${W-P.r}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>`
+       + `<text x="${P.l-6}" y="${y+3}" text-anchor="end">${v}</text>`;
+  }
+  days.forEach((d,i)=>{
+    const x = P.l + 10 + i*((W-P.l-P.r-10)/days.length);
+    let y = P.t + ih;
+    const parts = [["met",d.met.length],["under",d.under.length],["leave",d.leave.length],["absent",d.absent.length]];
+    parts.forEach(([k,n],pi)=>{
+      if (!n) return;
+      const h = Math.max(2, ih*n/max) - 2;      /* 2px surface gap between segments */
+      y -= h;
+      const first = parts.slice(0,pi).every(p=>!p[1]);
+      const r = first ? 0 : 0;
+      s += `<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="${r}" fill="${STATUS[k].c}"
+             data-tip="<b>${fmtDate(d.date)}</b><br>${STATUS[k].label}: ${n}"/>`;
+      y -= 2;
+    });
+    s += `<text x="${x+bw/2}" y="${H-6}" text-anchor="middle">${fmtDate(d.date).split(" ")[0]}</text>`;
+    if (!d.weekday)
+      s += `<rect x="${x-3}" y="${P.t}" width="${bw+6}" height="${ih}" fill="var(--ink-3)" opacity=".06" data-tip="Weekend"/>`;
+  });
+  s += `<line x1="${P.l}" x2="${W-P.r}" y1="${P.t+ih}" y2="${P.t+ih}" stroke="var(--baseline)" stroke-width="1"/></svg>`;
+  return s;
+}
+
+function hbars(rows, fmt){ /* rows: [{label, value, tip}] — sequential blue, magnitude */
+  const max = Math.max(1, ...rows.map(r=>r.value));
+  return rows.map(r=>`
+    <div style="display:grid;grid-template-columns:180px 1fr 70px;gap:10px;align-items:center;margin:4px 0">
+      <div style="text-align:right;color:var(--ink-2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.label)}</div>
+      <div style="height:14px;position:relative">
+        <div data-tip="${esc(r.tip||r.label+": "+fmt(r.value))}"
+          style="position:absolute;inset:0 auto 0 0;width:${Math.max(1,100*r.value/max)}%;
+          background:var(--seq-450);border-radius:0 4px 4px 0"></div>
+      </div>
+      <div style="font-size:12px;color:var(--ink-2)">${fmt(r.value)}</div>
+    </div>`).join("");
+}
+
+const legendHtml = keys => `<div class="legend">` +
+  keys.map(k=>`<span><i class="chip" style="background:${STATUS[k].c}"></i>${STATUS[k].label}</span>`).join("") + `</div>`;
+
+function tableHtml(headers, rows){
+  if (!rows.length) return `<div class="empty">None 🎉</div>`;
+  return `<div class="scroll"><table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+
+/* ---------- Overview ---------- */
+function renderOverview(){
+  const el = document.getElementById("tab-overview");
+  const wk = [...D.days].reverse().find(d=>d.weekday && (d.met.length+d.under.length)>0) || D.days[D.days.length-1];
+  const t = wk || {met:[],under:[],leave:[],absent:[],date:"—"};
+  const upcoming = D.meetings.filter(m=>new Date(m.startAt)>new Date()).length;
+  el.innerHTML = `
+    <div class="kpis">
+      <div class="tile"><div class="l">Roster</div><div class="v">${D.roster.length}</div><div class="d">verified members</div></div>
+      <div class="tile"><div class="l">Present — ${fmtDate(t.date)}</div><div class="v">${t.met.length+t.under.length}</div>
+        <div class="d"><span style="color:var(--good)">●</span> ${t.met.length} met 5.5h</div></div>
+      <div class="tile"><div class="l">Under 5.5h</div><div class="v">${t.under.length}</div><div class="d">present but short</div></div>
+      <div class="tile"><div class="l">Absent</div><div class="v">${t.absent.length}</div><div class="d">${t.leave.length} on approved leave</div></div>
+      <div class="tile"><div class="l">Tickets</div><div class="v">${D.tickets.open+D.tickets.claimed}</div><div class="d">${D.tickets.open} open · ${D.tickets.claimed} claimed</div></div>
+      <div class="tile"><div class="l">Meetings</div><div class="v">${D.meetings.length}</div><div class="d">${upcoming} upcoming</div></div>
+    </div>
+    <h2>Daily attendance — last ${D.days.length} days</h2>
+    ${legendHtml(["met","under","leave","absent"])}
+    <div class="chart-wrap">${stackedDays(D.days)}</div>
+    <h2>Voice hours by project — last ${D.windowDays} days</h2>
+    <div class="chart-wrap">${hbars(
+      D.projects.map(p=>({
+        label:p,
+        value: D.perMember.filter(m=>m.project===p).reduce((a,m)=>a+m.totalSeconds,0)/3600,
+        tip: p
+      })).sort((a,b)=>b.value-a.value),
+      v=>v.toFixed(1)+"h")}</div>`;
+  bindTips(el);
+  // Most recent days matter most — start the scrollable chart at the right end.
+  const wrap = el.querySelector(".chart-wrap");
+  requestAnimationFrame(()=>{ wrap.scrollLeft = wrap.scrollWidth; });
+}
+
+/* ---------- Daily ---------- */
+function renderDaily(){
+  const el = document.getElementById("tab-daily");
+  const opts = [...D.days].reverse().map(d=>
+    `<option value="${d.date}">${fmtDate(d.date)}${d.weekday?"":" (weekend)"}</option>`).join("");
+  el.innerHTML = `
+    <div class="controls"><label class="muted">Day</label><select id="daysel">${opts}</select>
+      <span class="muted" id="daysum"></span></div>
+    <div id="dayout"></div>`;
+  const sel = el.querySelector("#daysel");
+  const draw = ()=>{
+    const d = D.days.find(x=>x.date===sel.value);
+    const row = (r)=>{ const m=memOf(r.id); return [esc(m.name), esc(scope(m)||"—"), fmtH(r.s)]; };
+    const rowNoTime = (id)=>{ const m=memOf(id); return [esc(m.name), esc(scope(m)||"—")]; };
+    // Login punctuality vs the 2 PM IST cutoff.
+    const joinBy = new Map((d.lateLogin||[]).map(x=>[x.id, x.join]));
+    const cutoffRow = (id)=>{ const m=memOf(id); const jt=joinBy.get(id);
+      const tag = jt
+        ? `<span class="pill"><i class="chip" style="background:var(--warn)"></i>joined ${jt} IST</span>`
+        : `<span class="pill"><i class="chip" style="background:var(--crit)"></i>no-show</span>`;
+      return [esc(m.name), esc(scope(m)||"—"), tag]; };
+    const noShow = d.noShowByCutoff||[];
+    el.querySelector("#daysum").innerHTML =
+      `${d.met.length+d.under.length} present · ${d.absent.length} absent · ${d.leave.length} on leave · ` +
+      `<b style="color:var(--crit)">${noShow.length}</b> not logged in by 2 PM IST`;
+    el.querySelector("#dayout").innerHTML = `
+      <div class="card" style="margin-bottom:16px">
+        <h3><span>⏰ Not logged in by 2 PM IST</span><span class="n">${noShow.length}</span></h3>
+        <div class="muted" style="font-size:12px;margin:-2px 0 8px">
+          Roster members with no voice join before 14:00 IST — late arrivals (join time shown) plus no-shows. Excludes approved leave.</div>
+        ${tableHtml(["Member","Scope","Status"],
+          noShow.slice().sort((a,b)=>{const ja=joinBy.get(a),jb=joinBy.get(b);
+            if(ja&&!jb)return -1; if(!ja&&jb)return 1; if(ja&&jb)return ja.localeCompare(jb); return 0;})
+            .map(cutoffRow))}
+      </div>
+      <div class="grid2">
+        <div class="card"><h3><span style="color:var(--good)">✓ Met 5.5h</span><span class="n">${d.met.length}</span></h3>
+          ${tableHtml(["Member","Scope","Time"], d.met.sort((a,b)=>b.s-a.s).map(row))}</div>
+        <div class="card"><h3><span style="color:var(--warn)">◔ Under 5.5h</span><span class="n">${d.under.length}</span></h3>
+          ${tableHtml(["Member","Scope","Time"], d.under.sort((a,b)=>b.s-a.s).map(row))}</div>
+        <div class="card"><h3><span style="color:var(--crit)">✗ Absent (no voice all day)</span><span class="n">${d.absent.length}</span></h3>
+          ${tableHtml(["Member","Scope"], d.absent.map(rowNoTime))}</div>
+        <div class="card"><h3><span class="muted">✈ On approved leave</span><span class="n">${d.leave.length}</span></h3>
+          ${tableHtml(["Member","Scope"], d.leave.map(rowNoTime))}</div>
+      </div>`;
+  };
+  sel.addEventListener("change", draw); draw();
+}
+
+/* ---------- Meetings ---------- */
+function renderMeetings(){
+  const el = document.getElementById("tab-meetings");
+  if (!D.meetings.length){ el.innerHTML = `<div class="empty">No meetings in window.</div>`; return; }
+  const opts = D.meetings.map(m=>
+    `<option value="${m.id}">#${m.id} — ${esc(m.title)} (${new Date(m.startAt).toLocaleDateString("en-GB")})</option>`).join("");
+  el.innerHTML = `
+    <h2>All meetings — last ${D.windowDays} days</h2>
+    ${tableHtml(["ID","Title","When","Audience","Present","Late","Absent","Excused","%"],
+      D.meetings.map(m=>{
+        const pct = m.total? Math.round(100*(m.present+m.late.length)/m.total) : null;
+        return [m.id, esc(m.title),
+          new Date(m.startAt).toLocaleString("en-GB",{dateStyle:"medium",timeStyle:"short"}),
+          esc(m.audience), m.present, m.late.length,
+          `<b style="color:${m.absent.length?"var(--crit)":"inherit"}">${m.absent.length}</b>`,
+          m.excused.length, pct===null?"—":pct+"%"];
+      }))}
+    <h2>Meeting detail</h2>
+    <div class="controls"><select id="meetsel">${opts}</select></div>
+    <div id="meetout"></div>`;
+  const sel = el.querySelector("#meetsel");
+  const draw = ()=>{
+    const m = D.meetings.find(x=>String(x.id)===sel.value);
+    const t = a=>[esc(a.name), esc(a.project||"—")];
+    el.querySelector("#meetout").innerHTML = `
+      <div class="grid2">
+        <div class="card"><h3><span style="color:var(--crit)">✗ Absentees</span><span class="n">${m.absent.length}</span></h3>
+          ${tableHtml(["Member","Project"], m.absent.map(t))}</div>
+        <div class="card"><h3><span style="color:var(--warn)">◔ Late</span><span class="n">${m.late.length}</span></h3>
+          ${tableHtml(["Member","Project","Min late"], m.late.map(a=>[...t(a), a.late]))}</div>
+        <div class="card"><h3><span class="muted">✈ Excused</span><span class="n">${m.excused.length}</span></h3>
+          ${tableHtml(["Member","Project"], m.excused.map(t))}</div>
+      </div>`;
+  };
+  sel.addEventListener("change", draw); draw();
+}
+
+/* ---------- Members ---------- */
+function renderMembers(){
+  const el = document.getElementById("tab-members");
+  el.innerHTML = `
+    <div class="controls">
+      <input type="search" id="msearch" placeholder="Search member…">
+      <select id="mproj"><option value="">All projects</option>${D.projects.map(p=>`<option>${esc(p)}</option>`).join("")}</select>
+      <span class="muted">${D.perMember.length} members · window ${D.windowDays} days</span>
+    </div>
+    <div id="mout"></div>`;
+  const draw = ()=>{
+    const q = el.querySelector("#msearch").value.toLowerCase();
+    const pj = el.querySelector("#mproj").value;
+    const rows = D.perMember
+      .filter(m=>(!q || m.name.toLowerCase().includes(q)) && (!pj || m.project===pj))
+      .sort((a,b)=>b.totalSeconds-a.totalSeconds)
+      .map(m=>[esc(m.name), esc(m.batch||"—"), esc(scope(m)||"—"),
+        fmtH(m.totalSeconds), m.daysPresent, m.daysMet,
+        m.meetingPct===null?"—":`${m.meetingPct}% (${m.meetings})`]);
+    el.querySelector("#mout").innerHTML =
+      tableHtml(["Member","Batch","Scope","Voice time","Days present","Days ≥5.5h","Meeting %"], rows);
+  };
+  el.querySelector("#msearch").addEventListener("input", draw);
+  el.querySelector("#mproj").addEventListener("change", draw);
+  draw();
+}
+
+/* ---------- Leave & Warns ---------- */
+function renderLeave(){
+  const el = document.getElementById("tab-leave");
+  const pill = s => `<span class="pill"><i class="chip" style="background:${
+    s==="approved"?"var(--good)":s==="pending"?"var(--warn)":"var(--crit)"}"></i>${s}</span>`;
+  el.innerHTML = `
+    <h2>Leave requests</h2>
+    ${tableHtml(["Member","Type","From","To","Status","Reason"],
+      D.leaves.map(l=>[esc(l.name), l.type, fmtDate(l.start), fmtDate(l.end), pill(l.status), esc(l.reason)]))}
+    <h2>Warnings — last ${D.windowDays} days</h2>
+    ${tableHtml(["Member","Date","Reason"], D.warns.map(w=>[esc(w.name), fmtDate(w.at), esc(w.reason)]))}`;
+}
+
+/* ---------- tabs ---------- */
+const TABS = [
+  ["overview","Overview",renderOverview],
+  ["daily","Daily Attendance",renderDaily],
+  ["meetings","Meetings",renderMeetings],
+  ["members","Members",renderMembers],
+  ["leave","Leave & Warns",renderLeave],
+];
+const nav = document.getElementById("tabs");
+TABS.forEach(([id,label],i)=>{
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.onclick = ()=>{
+    nav.querySelectorAll("button").forEach(x=>x.classList.remove("active"));
+    document.querySelectorAll("section").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    document.getElementById("tab-"+id).classList.add("active");
+  };
+  if (i===0) b.classList.add("active");
+  nav.appendChild(b);
+});
+document.getElementById("genat").textContent =
+  `Generated ${new Date(D.generatedAt).toLocaleString("en-GB")} · ${D.windowDays}-day window · daily requirement ${(THRESH/3600).toFixed(1)}h · days are UTC`;
+TABS.forEach(([, ,fn])=>fn());
+document.getElementById("tab-overview").classList.add("active");
+</script>
+</body>
+</html>

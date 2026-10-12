@@ -1,0 +1,133 @@
+import { Events } from "discord.js";
+import { env } from "./config/env.js";
+import { createClient } from "./core/client.js";
+import { logger } from "./core/logger.js";
+import { registry } from "./core/registry.js";
+import { registerAllCommands } from "./commands/index.js";
+import { registerReady } from "./events/ready.js";
+import { registerInteractionCreate } from "./events/interactionCreate.js";
+import { registerGuildMemberAdd } from "./events/guildMemberAdd.js";
+import { registerLogging } from "./events/logging.js";
+import { registerVoiceTracking } from "./events/voiceTracking.js";
+import {
+  closeAllOpenSessions,
+  closeStaleSessionsOnBoot,
+  reopenActiveSessions,
+  startAttendanceSweep,
+  stopAttendanceSweep,
+} from "./services/attendance.js";
+import { initMeetings, restoreGrants } from "./services/meeting.js";
+import { setMeetingHooks, startScheduler, stopScheduler } from "./services/meetingScheduler.js";
+import {
+  handleMeetingEnd,
+  handleMeetingStart,
+  handleMeetingTick,
+  initMeetingAttendance,
+} from "./services/meetingAttendance.js";
+import { leaveHandlers } from "./interactions/leave.js";
+import { startMonthlySummary, stopMonthlySummary } from "./services/monthlySummary.js";
+import { verificationHandlers } from "./interactions/verification.js";
+import { ticketHandlers } from "./interactions/tickets.js";
+import { startTicketArchiveSweep, stopTicketArchiveSweep } from "./services/tickets.js";
+import {
+  startScheduledMessages,
+  stopScheduledMessages,
+} from "./services/scheduledMessages.js";
+import { projectWizardHandler } from "./interactions/project.js";
+import { meetingPeopleSelectHandler } from "./interactions/meetingPeople.js";
+import { scheduleModalHandler } from "./interactions/schedule.js";
+import { connectDb, disconnectDb } from "./core/db.js";
+import { startDashboard, stopDashboard } from "./web/server.js";
+
+async function main() {
+  await connectDb();
+  registerAllCommands();
+  for (const h of verificationHandlers) registry.registerHandler(h);
+  for (const h of ticketHandlers) registry.registerHandler(h);
+  for (const h of leaveHandlers) registry.registerHandler(h);
+  registry.registerHandler(projectWizardHandler);
+  registry.registerHandler(meetingPeopleSelectHandler);
+  registry.registerHandler(scheduleModalHandler);
+
+  await closeStaleSessionsOnBoot();
+
+  const client = createClient();
+  initMeetings(client);
+  registerReady(client);
+  registerInteractionCreate(client);
+  registerGuildMemberAdd(client);
+  registerLogging(client);
+  registerVoiceTracking(client);
+
+  initMeetingAttendance(client);
+  setMeetingHooks({
+    onStart: handleMeetingStart,
+    onTick: handleMeetingTick,
+    onEnd: handleMeetingEnd,
+  });
+
+  client.once(Events.ClientReady, () => {
+    void reopenActiveSessions(client).then(() => startAttendanceSweep(client));
+    void restoreGrants();
+    startScheduler(client);
+    startMonthlySummary(client);
+    startTicketArchiveSweep(client);
+    startScheduledMessages(client);
+    void startDashboard();
+  });
+
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, "Shutting down");
+    stopScheduler();
+    stopMonthlySummary();
+    stopTicketArchiveSweep();
+    stopScheduledMessages();
+    stopAttendanceSweep();
+    stopDashboard();
+    // Credit + close active voice sessions before the DB closes, so a deploy
+    // doesn't leave dangling sessions that accrue downtime on the next boot.
+    await closeAllOpenSessions().catch((err) =>
+      logger.error({ err }, "Failed closing voice sessions on shutdown")
+    );
+    await disconnectDb().catch(() => {});
+    client.destroy();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("unhandledRejection", (reason) => {
+    logger.error({ reason }, "Unhandled rejection");
+  });
+
+  await loginWithRetry(client);
+}
+
+/**
+ * Retry the INITIAL gateway login on transient network errors (connect timeout,
+ * DNS/reset) with capped exponential backoff. discord.js handles reconnects on
+ * its own once logged in — it's only this first login that used to crash the
+ * whole process on a single blip, taking every interaction down with it until a
+ * human restarted the bot. An auth error (bad token) is not transient: fail fast.
+ */
+async function loginWithRetry(client: import("discord.js").Client): Promise<void> {
+  const MAX_DELAY_MS = 60_000;
+  let attempt = 0;
+  for (;;) {
+    try {
+      await client.login(env.DISCORD_TOKEN);
+      return;
+    } catch (err) {
+      const code = (err as { code?: string | number })?.code;
+      if (code === "TokenInvalid" || code === 401) throw err; // not transient
+      attempt += 1;
+      const delay = Math.min(1000 * 2 ** (attempt - 1), MAX_DELAY_MS);
+      logger.warn({ err, attempt, delayMs: delay }, "Gateway login failed — retrying");
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+main().catch((err) => {
+  logger.error({ err }, "Fatal startup error");
+  process.exit(1);
+});
