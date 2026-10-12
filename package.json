@@ -29,7 +29,7 @@
     "test:watch": "vitest",
     "build:ui": "npm --prefix webui run build",
     "dev:ui": "npm --prefix webui run dev",
-    "postinstall": "prisma generate && prisma migrate deploy"
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

@@ -24,7 +24,30 @@ import { meetingPeopleSelectHandler } from "./interactions/meetingPeople.js";
 import { scheduleModalHandler } from "./interactions/schedule.js";
 import { connectDb, disconnectDb } from "./core/db.js";
 import { startDashboard, stopDashboard } from "./web/server.js";
+/**
+ * Apply pending migrations before the first query.
+ *
+ * The hosting panel runs `node dist/index.js` directly — never `npm start` — so
+ * there is no other hook where migrations can run on the server. Doing it here
+ * also means .env is already loaded, which `prisma migrate deploy` needs and
+ * npm's postinstall cannot rely on.
+ *
+ * A failure is logged but not fatal: an unreachable migration step should not
+ * keep an otherwise-healthy bot offline, and the schema is usually already current.
+ */
+async function applyMigrations() {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    try {
+        const { stdout } = await promisify(execFile)(process.platform === "win32" ? "npx.cmd" : "npx", ["prisma", "migrate", "deploy"], { cwd: process.cwd(), timeout: 120_000 });
+        logger.info({ out: stdout.trim().split(/\r?\n/).slice(-2).join(" ") }, "Migrations applied");
+    }
+    catch (err) {
+        logger.error({ err }, "Migration step failed — continuing with the existing schema");
+    }
+}
 async function main() {
+    await applyMigrations();
     await connectDb();
     registerAllCommands();
     for (const h of verificationHandlers)
