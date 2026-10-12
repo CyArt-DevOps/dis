@@ -1,0 +1,13 @@
+// Build-only config. The root tsconfig includes `scripts/**/*` for typechecking,
+// which makes the project root the common source root and emits to `dist/src/...`
+// — but package.json `start` and the Dockerfile both expect `dist/index.js`.
+// Pinning rootDir to `src` keeps the emitted layout flat. Scripts are run with
+// tsx (never compiled), so excluding them here costs nothing; `npm run typecheck`
+// still covers them via the root config.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src"
+  },
+  "include": ["src/**/*"]
+}
