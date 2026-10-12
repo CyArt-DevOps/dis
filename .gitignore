@@ -8,7 +8,8 @@ webui/node_modules/
 
 # Live data and backups: the SQLite database is uploaded to the host directly,
 # not versioned.
-prisma/data/
+prisma/data/*
+!prisma/data/.gitkeep
 data/*.db
 data/*.db-*
 data/*.bak-*
