@@ -6,7 +6,7 @@ Production target for the CyArt intern bot and its dashboard.
 |---|---|
 | Panel | https://dash.monkey-network.xyz · server **Intern Bot** (`18955455`) |
 | Allocation | `us.monkey-network.xyz:5015` (1 of 1) |
-| Repo | `https://github.com/CyArt-DevOps/dis` (private, branch `main`) |
+| Repo | `https://github.com/CyArt-DevOps/dis` (public, branch `main`) |
 | Runtime | Pterodactyl Node.js egg, Docker image **Nodejs 25** |
 | Dashboard URL | https://dis.cyart.io |
 
@@ -44,13 +44,10 @@ Whitelabel → `dis.cyart.io` on port `5015`.
 
 ## Remaining steps (need credentials — do these yourself)
 
-1. **Git credentials.** Startup tab → `GIT USERNAME` = your GitHub username,
-   `GIT ACCESS TOKEN` = a PAT with `repo` scope
-   (https://github.com/settings/tokens). The repo is private; the clone fails
-   without it.
-2. **Install.** Settings → Reinstall Server. This clones the repo and runs
-   `npm install --production`.
-3. **`.env`.** Files tab → New File named `.env`, using `.env.example` as the
+1. **Install.** Settings → Reinstall Server. This clones the repo and runs
+   `npm install --production`. The repo is public, so no git credentials are
+   needed — leave `GIT USERNAME` and `GIT ACCESS TOKEN` empty.
+2. **`.env`.** Files tab → New File named `.env`, using `.env.example` as the
    shape. For production it must contain:
 
    ```
@@ -66,14 +63,19 @@ Whitelabel → `dis.cyart.io` on port `5015`.
 
    `WEB_HOST=0.0.0.0` is what makes the dashboard reachable; without
    `WEB_PASSWORD` it refuses to start rather than serve member data unguarded.
-4. **Database.** Upload the local `prisma/data/app.db` (~15 MB) to
+3. **Database.** Upload the local `prisma/data/app.db` (~15 MB) to
    `prisma/data/app.db` on the server, with the bot **stopped** at both ends.
    It holds every member, meeting, attendance and leave record — starting
    without it gives an empty bot.
-5. **Start**, then watch Console for `Attendance dashboard listening` with
+4. **Start**, then watch Console for `Attendance dashboard listening` with
    `authenticated: true`, and visit https://dis.cyart.io.
 
 ## Important
+
+- **The repo is public.** Nothing secret lives in it (`.env` and the database are
+  gitignored), but the source, org structure in `config/org.json` and the guild
+  id are all readable. Keep it that way: never commit `.env`, `prisma/data/`, or
+  a backup dump.
 
 - **One bot at a time.** Stop the local `npm run dev` before starting the host,
   or two processes answer every interaction and both write to their own copy of
