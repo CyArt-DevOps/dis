@@ -9,6 +9,32 @@ Production target for the CyArt intern bot and its dashboard.
 | Repo | `https://github.com/CyArt-DevOps/dis` (public, branch `main`) |
 | Runtime | Pterodactyl Node.js egg, Docker image **Nodejs 25** |
 | Dashboard URL | https://dis.cyart.io |
+| Database | TiDB Cloud Starter `cyart-intern-bot`, us-east-1, free ($0 spend limit) |
+
+## Database
+
+Data lives in TiDB Cloud, not on this server. The host is disposable: if
+MonkeyBytes deletes the container, reinstall and start — nothing is lost but
+uptime. `DATABASE_URL` in the host `.env` is the TiDB connection string.
+
+Notes that matter when changing the schema:
+
+- The provider is `mysql` with `relationMode = "prisma"`, so foreign keys are
+  emulated by the client. Writes must go through Prisma.
+- Free-text columns are `@db.Text`; MySQL's default `VARCHAR(191)` is too short
+  for real leave reasons (the longest in production is 1572 characters).
+- `remindersSent` is `VARCHAR(500)` on purpose: MySQL forbids `DEFAULT` on TEXT.
+- The attendance upsert in `services/attendance.ts` is hand-written MySQL
+  (`ON DUPLICATE KEY UPDATE`, `LEAST()`), not portable SQL.
+
+`prisma/data/app.db` on the host is the pre-cutover SQLite file, kept as a
+rollback. It stops being current the moment the bot runs on TiDB.
+
+### Rollback
+
+1. `git revert` the TiDB merge on `main` and push.
+2. Put the old `DATABASE_URL=file:./data/app.db?...` back in the host `.env`.
+3. Restart. Anything written to TiDB after cutover is not in that file.
 
 ## How it fits together
 
