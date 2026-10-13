@@ -53,10 +53,15 @@ import { startDashboard, stopDashboard } from "./web/server.js";
 async function applyMigrations(): Promise<void> {
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
+  const { createRequire } = await import("node:module");
   try {
+    // Run the Prisma CLI through this node binary instead of npx: Node refuses to
+    // spawn .cmd shims on Windows without a shell (spawn EINVAL), and skipping npx
+    // also avoids its slow package resolution on every boot.
+    const prismaCli = createRequire(import.meta.url).resolve("prisma/build/index.js");
     const { stdout } = await promisify(execFile)(
-      process.platform === "win32" ? "npx.cmd" : "npx",
-      ["prisma", "migrate", "deploy"],
+      process.execPath,
+      [prismaCli, "migrate", "deploy"],
       { cwd: process.cwd(), timeout: 120_000 }
     );
     logger.info({ out: stdout.trim().split(/\r?\n/).slice(-2).join(" ") }, "Migrations applied");

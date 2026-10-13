@@ -63,10 +63,19 @@ Whitelabel → `dis.cyart.io` on port `5015`.
 
    `WEB_HOST=0.0.0.0` is what makes the dashboard reachable; without
    `WEB_PASSWORD` it refuses to start rather than serve member data unguarded.
-3. **Database.** Upload the local `prisma/data/app.db` (~15 MB) to
-   `prisma/data/app.db` on the server, with the bot **stopped** at both ends.
-   It holds every member, meeting, attendance and leave record — starting
-   without it gives an empty bot.
+3. **Database.** Stop the local bot, then:
+
+   ```bash
+   npm run db:snapshot
+   ```
+
+   Upload the resulting `prisma/data/snapshot/app.db` to `prisma/data/app.db`
+   on the host (Files tab → navigate into `prisma/data` → Upload).
+
+   Do not hand-copy `app.db`: SQLite runs in WAL mode here, so recent writes sit
+   in `app.db-wal` and a plain copy loses them. The snapshot folds the WAL in and
+   compacts the file. It holds every member, meeting, attendance and leave
+   record — starting without it gives an empty bot.
 4. **Start**, then watch Console for `Attendance dashboard listening` with
    `authenticated: true`, and visit https://dis.cyart.io.
 
