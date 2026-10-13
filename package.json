@@ -30,7 +30,9 @@
     "build:ui": "npm --prefix webui run build",
     "dev:ui": "npm --prefix webui run dev",
     "postinstall": "prisma generate",
-    "db:snapshot": "tsx scripts/db-snapshot.ts"
+    "db:snapshot": "tsx scripts/db-snapshot.ts",
+    "db:tidb:copy": "tsx scripts/migrate-to-tidb.ts",
+    "db:sqlite:generate": "prisma generate --schema prisma/sqlite-source.prisma"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

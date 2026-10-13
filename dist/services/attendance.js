@@ -34,11 +34,13 @@ async function addDailySeconds(guildId, userId, day, seconds) {
     // this for every open session every minute, and three round trips each was a
     // large part of the write load that made SQLite time out. MIN() applies the
     // 24h ceiling atomically, which also removes the read-modify-write race.
+    // MySQL/TiDB dialect: backtick identifiers, ON DUPLICATE KEY UPDATE (which
+    // fires on the @@unique([guildId, userId, day]) index), and LEAST() for the
+    // scalar minimum — MySQL's MIN() is an aggregate and would not compile here.
     await prisma.$executeRaw `
-    INSERT INTO "Attendance" ("guildId", "userId", "day", "seconds")
-    VALUES (${guildId}, ${userId}, ${day}, MIN(${seconds}, ${DAY_SECONDS}))
-    ON CONFLICT ("guildId", "userId", "day")
-    DO UPDATE SET "seconds" = MIN("Attendance"."seconds" + ${seconds}, ${DAY_SECONDS})
+    INSERT INTO \`Attendance\` (\`guildId\`, \`userId\`, \`day\`, \`seconds\`)
+    VALUES (${guildId}, ${userId}, ${day}, LEAST(${seconds}, ${DAY_SECONDS}))
+    ON DUPLICATE KEY UPDATE \`seconds\` = LEAST(\`seconds\` + ${seconds}, ${DAY_SECONDS})
   `;
 }
 /**

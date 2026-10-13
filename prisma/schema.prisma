@@ -3,8 +3,14 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "mysql"
   url      = env("DATABASE_URL")
+  // TiDB Cloud Serverless: foreign keys are emulated by Prisma rather than
+  // enforced in the database. This is the configuration TiDB documents for
+  // Prisma, and it keeps migrations from depending on FK support. The cost is
+  // that referential actions (the cascade on MeetingAttendance) run in the
+  // client, so writes must go through Prisma — which they all do.
+  relationMode = "prisma"
 }
 
 model Member {
@@ -35,7 +41,7 @@ model Ticket {
   guildId    String
   channelId  String?
   type       String
-  subject    String
+  subject    String @db.Text
   openerId   String
   claimedById String?
   status     String    @default("open") // open | claimed | closed
@@ -62,6 +68,7 @@ model VoiceSession {
 
   member Member? @relation(fields: [userId], references: [id])
 
+  @@index([userId])
   @@index([guildId, userId])
   @@index([guildId, joinedAt])
   @@index([leftAt])
@@ -78,6 +85,7 @@ model Attendance {
   member Member? @relation(fields: [userId], references: [id])
 
   @@unique([guildId, userId, day])
+  @@index([userId])
   @@index([guildId, day])
 }
 
@@ -86,7 +94,7 @@ model Warn {
   guildId   String
   userId    String
   modId     String
-  reason    String
+  reason    String @db.Text
   createdAt DateTime @default(now())
 
   @@index([guildId, userId])
@@ -109,7 +117,7 @@ model Meeting {
   id              Int      @id @default(autoincrement())
   guildId         String
   title           String
-  description     String?
+  description     String? @db.Text
   organizerId     String
   startAt         DateTime // UTC
   durationMin     Int
@@ -118,14 +126,16 @@ model Meeting {
   audienceProject String?  // project key
   audienceModule  Int?
   audiencePod     Int?
-  audienceMemberIds String? // CSV of Discord user IDs, only set when audienceType = people
+  audienceMemberIds String? @db.Text // CSV of Discord user IDs, only set when audienceType = people
   office          String?  // manager | hr, only set when audienceType = people
   notifyChannelId String?  // private meeting-<id> channel for people-audience notifications
   voiceChannelId  String
   mandatory       Boolean  @default(true)
   attendanceWindowMin Int  @default(10)
   reminderIntervalMin Int? // optional extra custom reminder
-  remindersSent   String   @default("") // CSV of fired reminder keys
+  // MySQL forbids a DEFAULT on TEXT, so this stays a sized VARCHAR. The value
+  // is a short CSV of reminder keys (longest seen: 19 chars).
+  remindersSent   String   @default("") @db.VarChar(500)
   status          String   @default("scheduled") // scheduled | monitoring | completed | cancelled
   createdAt       DateTime @default(now())
 
@@ -164,10 +174,10 @@ model LeaveRequest {
   type         String   @default("casual") // casual | sick | exam
   startAt      DateTime // UTC (date + start time)
   endAt        DateTime // UTC (date + end time)
-  reason       String
-  documentUrl  String?  // medical certificate / exam timetable
+  reason       String @db.Text
+  documentUrl  String? @db.Text // medical certificate / exam timetable
   channelId    String?  // private HR leave ticket channel
-  approvedDays String?  // CSV YYYY-MM-DD (exam leave only) — otherwise range applies
+  approvedDays String? @db.Text // CSV YYYY-MM-DD (exam leave only) — otherwise range applies
   status       String   @default("pending") // pending | approved | rejected
   reviewedById String?
   reviewedAt   DateTime?
@@ -182,12 +192,12 @@ model ScheduledMessage {
   guildId     String
   channelId   String
   authorId    String // who ran /schedule — always the credited author
-  content     String
+  content     String @db.Text
   sendAt      DateTime // UTC
   status      String   @default("pending") // pending | sent | cancelled | failed
   sentAt      DateTime?
   messageId   String? // delivered message, for reference
-  error       String? // failure reason when status = failed
+  error       String? @db.Text // failure reason when status = failed
   createdAt   DateTime @default(now())
 
   @@index([status, sendAt])

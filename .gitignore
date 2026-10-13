@@ -23,3 +23,5 @@ data/seed-info.log
 # `npm install --production`, which omits typescript and vite, so it cannot
 # build anything itself — it only runs what is already compiled here.
 prisma/data/snapshot/
+generated/
+.env.tidb
