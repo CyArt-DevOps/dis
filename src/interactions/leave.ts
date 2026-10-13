@@ -231,7 +231,9 @@ export const leaveApproveHandler: InteractionHandler = {
   matches: (i) => i.isButton() && (cid(i)?.startsWith(LEAVE_IDS.approve + ":") ?? false),
   async handle(i) {
     if (!i.isButton() || !i.inCachedGuild()) return;
-    const staff = await i.guild.members.fetch(i.user.id);
+    // Exam leave answers with showModal (no deferral possible), so this path
+    // must stay lean: use the member from the interaction, not a REST fetch.
+    const staff = i.member;
     if (!isStaff(staff)) {
       await i.reply({ content: "Only HR/Manager/Founder can decide leave.", flags: MessageFlags.Ephemeral });
       return;

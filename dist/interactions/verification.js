@@ -15,7 +15,11 @@ export const beginHandler = {
     async handle(i) {
         if (!i.isButton() || !i.inCachedGuild())
             return;
-        const member = await i.guild.members.fetch(i.user.id);
+        // `showModal` IS the acknowledgement and cannot be deferred, so everything
+        // before it competes with Discord's 3s window. Discord already sends the
+        // member (roles included) with the interaction, so use it rather than
+        // spending a REST round trip re-fetching what we were just handed.
+        const member = i.member;
         if (isVerified(member)) {
             await i.reply({
                 content: "You're already verified. If your batch/project/module/pod needs to change, ask a staff member to update it with `/assign`.",
