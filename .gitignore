@@ -25,3 +25,11 @@ data/seed-info.log
 prisma/data/snapshot/
 generated/
 .env.tidb
+
+# The host runs `npm install --production` on every boot, which rewrites this
+# file. A tracked, locally-modified lockfile makes the egg's `git pull` abort
+# with "local changes would be overwritten" — so AUTO_UPDATE silently stops
+# deploying and the server keeps running stale code. Untracked, the rewrite is
+# harmless. Dependency pinning that must survive lives in package.json
+# (`overrides`), not here.
+package-lock.json
