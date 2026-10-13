@@ -12,39 +12,22 @@ prisma.$on("warn", (e) => logger.warn({ prisma: e.message }, "Prisma warn"));
 prisma.$on("error", (e) => logger.error({ prisma: e.message }, "Prisma error"));
 
 /**
- * SQLite defaults are wrong for a bot that writes continuously while the
- * dashboard reads:
+ * TiDB needs no session tuning here.
  *
- * - `journal_mode=WAL` lets readers run concurrently with the writer. In the
- *   default rollback-journal mode a write takes an EXCLUSIVE lock on the whole
- *   file, so an attendance flush and a calendar query fight, and Prisma reports
- *   the loser as P1008 "Operations timed out". WAL is stored in the database
- *   file, so this sticks once applied.
- * - `busy_timeout` makes a blocked statement WAIT instead of failing instantly.
- *   Without it SQLite's default is 0 — any contention is an immediate error.
- * - `synchronous=NORMAL` is the standard, safe-under-WAL setting: durable
- *   against process crashes, only at risk from OS/power loss.
+ * This used to apply SQLite PRAGMAs (WAL, busy_timeout, synchronous) because a
+ * single file served both the bot's continuous writes and the dashboard's
+ * reads, and the default locking made them fight. TiDB is a networked, MVCC
+ * database: readers never block writers, so the contention those settings
+ * existed to solve does not arise. PRAGMA is also not valid MySQL syntax.
  */
-async function applyPragmas(): Promise<void> {
-  // These PRAGMAs return a row, so they must go through $queryRaw —
-  // $executeRaw fails with "Execute returned results, which is not allowed".
-  const [mode] = await prisma.$queryRawUnsafe<{ journal_mode: string }[]>(
-    "PRAGMA journal_mode = WAL"
-  );
-  await prisma.$queryRawUnsafe("PRAGMA busy_timeout = 10000");
-  await prisma.$executeRawUnsafe("PRAGMA synchronous = NORMAL");
-  const journalMode = mode?.journal_mode ?? "unknown";
-  if (journalMode.toLowerCase() !== "wal") {
-    logger.warn({ journalMode }, "SQLite is NOT in WAL mode — expect lock contention");
-  } else {
-    logger.info({ journalMode, busyTimeoutMs: 10000 }, "SQLite tuned for concurrent access");
-  }
-}
 
 export async function connectDb(): Promise<void> {
   await prisma.$connect();
-  await applyPragmas();
-  logger.info("Database connected");
+  // One cheap round trip, so a bad DATABASE_URL or a blocked egress port fails
+  // here with a clear message instead of on the first real query minutes later.
+  const started = Date.now();
+  await prisma.$queryRawUnsafe("SELECT 1");
+  logger.info({ rttMs: Date.now() - started }, "Database connected");
 }
 
 export async function disconnectDb(): Promise<void> {
@@ -52,12 +35,22 @@ export async function disconnectDb(): Promise<void> {
 }
 
 /** Prisma codes worth retrying: pool/query timeout and an open transaction conflict. */
-const TRANSIENT_CODES = new Set(["P1008", "P2034"]);
+const TRANSIENT_CODES = new Set(["P1008", "P2034", "P1017"]);
 
+/**
+ * Transient now means something different than it did on SQLite: instead of a
+ * locked file, it is a deadlock, a lock-wait timeout, or a connection the
+ * serverless gateway closed while idle. All three are safe to retry.
+ */
 function isTransient(err: unknown): boolean {
   const e = err as { code?: string; message?: string };
   if (e?.code && TRANSIENT_CODES.has(e.code)) return true;
-  return Boolean(e?.message && /database is locked|SQLITE_BUSY/i.test(e.message));
+  return Boolean(
+    e?.message &&
+      /deadlock|lock wait timeout|server has gone away|connection (?:is )?closed|ECONNRESET|write epoll/i.test(
+        e.message
+      )
+  );
 }
 
 /**
