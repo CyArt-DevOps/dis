@@ -65,7 +65,9 @@ export const schedule: SlashCommand = {
       await interaction.reply({ content: "Guild only.", flags: MessageFlags.Ephemeral });
       return;
     }
-    const member = await interaction.guild.members.fetch(interaction.user.id);
+    // `create` answers with showModal, which cannot be deferred — so avoid the
+    // REST round trip and use the member Discord sent with the interaction.
+    const member = interaction.member;
     const sub = interaction.options.getSubcommand();
 
     // `create` collects the body in a modal (multi-line), and showModal IS the

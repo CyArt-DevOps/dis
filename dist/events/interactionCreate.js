@@ -18,20 +18,38 @@ async function acknowledge(interaction, mode) {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     }
 }
+/**
+ * Discord discards an interaction that is not acknowledged within 3 seconds and
+ * the user sees "The application didn't respond in time". Since the database
+ * moved to TiDB every query costs a network round trip, so handlers that were
+ * comfortably fast against a local file are no longer obviously so. Log the
+ * ones that get close, with the name of the handler, so a recurrence points
+ * straight at the culprit instead of needing a reproduction.
+ */
+const SLOW_HANDLER_MS = 2000;
 export function registerInteractionCreate(client) {
     client.on(Events.InteractionCreate, async (interaction) => {
+        const startedAt = Date.now();
+        const warnIfSlow = (name) => {
+            const ms = Date.now() - startedAt;
+            if (ms >= SLOW_HANDLER_MS) {
+                logger.warn({ handler: name, ms }, "Interaction handler close to the 3s limit");
+            }
+        };
         try {
             if (interaction.isChatInputCommand()) {
                 const cmd = registry.commands.get(interaction.commandName);
                 if (!cmd)
                     return;
                 await cmd.execute(interaction);
+                warnIfSlow(`/${interaction.commandName}`);
                 return;
             }
             for (const h of registry.handlers) {
                 if (h.matches(interaction)) {
                     await acknowledge(interaction, h.ack ?? "self");
                     await h.handle(interaction);
+                    warnIfSlow(h.id);
                     return;
                 }
             }
