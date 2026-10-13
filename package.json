@@ -29,7 +29,8 @@
     "test:watch": "vitest",
     "build:ui": "npm --prefix webui run build",
     "dev:ui": "npm --prefix webui run dev",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "db:snapshot": "tsx scripts/db-snapshot.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
