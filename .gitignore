@@ -33,3 +33,7 @@ generated/
 # harmless. Dependency pinning that must survive lives in package.json
 # (`overrides`), not here.
 package-lock.json
+
+# Database backups: real member data, never committed.
+backups/
+logs/

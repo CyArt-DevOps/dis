@@ -11,6 +11,25 @@ Production target for the CyArt intern bot and its dashboard.
 | Dashboard URL | https://dis.cyart.io |
 | Database | TiDB Cloud Starter `cyart-intern-bot`, us-east-1, free ($0 spend limit) |
 
+## Running on a laptop (current situation)
+
+MonkeyBytes is suspended, so the bot runs locally and `dis.cyart.io` is down.
+Two things matter while that is true:
+
+```bash
+npm run start:supervised   # restarts the bot if it crashes; logs to logs/
+npm run db:backup          # full backup to backups/ (gzipped JSON, ~1.6 MB)
+npm run db:verify          # proves the newest backup actually restores
+npm run db:restore -- backups/<file>.json.gz --force   # put it back
+```
+
+Nothing restarts a crashed bot on a laptop, and nothing else holds this data:
+the host's SQLite file is stale and TiDB's free tier guarantees no backups you
+control. Take a backup daily. `db:verify` restores into a scratch database and
+drops it, so it never touches production.
+
+Sleep is the other hazard — a sleeping laptop stops recording attendance.
+
 ## Database
 
 Data lives in TiDB Cloud, not on this server. The host is disposable: if
