@@ -21,13 +21,51 @@ prisma.$on("error", (e) => logger.error({ prisma: e.message }, "Prisma error"));
  * existed to solve does not arise. PRAGMA is also not valid MySQL syntax.
  */
 
-export async function connectDb(): Promise<void> {
-  await prisma.$connect();
-  // One cheap round trip, so a bad DATABASE_URL or a blocked egress port fails
-  // here with a clear message instead of on the first real query minutes later.
-  const started = Date.now();
-  await prisma.$queryRawUnsafe("SELECT 1");
-  logger.info({ rttMs: Date.now() - started }, "Database connected");
+/**
+ * Connect, retrying transient failures.
+ *
+ * On SQLite the database was a local file: if the process started, it was
+ * there. TiDB is across a network and scales to zero when idle, so the first
+ * connection can time out while the cluster resumes, and a brief blip on the
+ * way out is normal. Without this retry a single P1001 killed the process at
+ * boot and it stayed dead until someone noticed — which is exactly how the
+ * server went offline, leaving 22 voice sessions to be closed by crash
+ * recovery on the next start.
+ *
+ * Only reachability failures are retried. A wrong URL or bad credentials still
+ * fails fast, because retrying those just delays an error a human must fix.
+ *
+ * `attempts = 0` means keep trying. Nothing restarts this process if it exits,
+ * so for a database that is merely unreachable the right behaviour is to wait
+ * for it to come back rather than die and need a human to press Start.
+ */
+const UNREACHABLE = new Set(["P1001", "P1002", "P1017"]);
+const MAX_RETRY_DELAY_MS = 60_000;
+
+export async function connectDb(attempts = 0): Promise<void> {
+  for (let i = 1; ; i++) {
+    try {
+      await prisma.$connect();
+      // One cheap round trip, so a bad DATABASE_URL or a blocked egress port
+      // fails here with a clear message instead of on the first real query.
+      const started = Date.now();
+      await prisma.$queryRawUnsafe("SELECT 1");
+      logger.info({ rttMs: Date.now() - started, attempt: i }, "Database connected");
+      return;
+    } catch (err) {
+      const code = (err as { errorCode?: string; code?: string })?.code
+        ?? (err as { errorCode?: string })?.errorCode;
+      const exhausted = attempts > 0 && i >= attempts;
+      if (!code || !UNREACHABLE.has(code) || exhausted) throw err;
+      // 2s, 4s, 8s, 16s, ... capped at a minute.
+      const delay = Math.min(2000 * 2 ** (i - 1), MAX_RETRY_DELAY_MS);
+      logger.warn(
+        { err: (err as Error).message, code, attempt: i, nextRetryMs: delay },
+        "Database unreachable — retrying"
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
 }
 
 export async function disconnectDb(): Promise<void> {
