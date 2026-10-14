@@ -37,3 +37,4 @@ package-lock.json
 # Database backups: real member data, never committed.
 backups/
 logs/
+renumber-map.json

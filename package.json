@@ -36,7 +36,9 @@
     "db:backup": "tsx scripts/backup-db.ts",
     "db:restore": "tsx scripts/restore-db.ts",
     "db:verify": "tsx scripts/verify-backup.ts",
-    "start:supervised": "node scripts/supervise.mjs"
+    "start:supervised": "node scripts/supervise.mjs",
+    "db:renumber": "tsx scripts/renumber-ids.ts",
+    "db:renumber:discord": "tsx scripts/fix-discord-after-renumber.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
