@@ -48,7 +48,15 @@ async function main(): Promise<void> {
       select: { id: true },
     });
     const moves = rows.map((r, i) => ({ from: r.id, to: lastGood + 1 + i }));
-    mappings.push({ table, moves, nextAutoIncrement: lastGood + rows.length + 1 });
+    // Base the counter on the real maximum after the moves, never on the move
+    // count: on a second run there is nothing left to move, and lastGood+1 would
+    // sit below ids that already exist and collide on the next insert.
+    const all = await m[table]!.findMany({ orderBy: { id: "desc" }, take: 1, select: { id: true } });
+    const maxAfter = Math.max(
+      moves.length ? moves[moves.length - 1]!.to : 0,
+      all.length ? (rows.some((r) => r.id === all[0]!.id) ? 0 : all[0]!.id) : 0
+    );
+    mappings.push({ table, moves, nextAutoIncrement: maxAfter + 1 });
     console.log(`${table}: ${moves.length} rows -> ${moves.length ? `${moves[0]!.to}..${moves[moves.length - 1]!.to}` : "nothing to do"}`);
     for (const mv of moves) console.log(`   ${String(mv.from).padStart(7)} -> ${mv.to}`);
   }
@@ -81,9 +89,13 @@ async function main(): Promise<void> {
     }
 
     await prisma.$executeRawUnsafe(`ALTER TABLE \`${sqlTable}\` AUTO_INCREMENT = ${nextAutoIncrement}`);
-    // Strictly sequential from here on, so the 30000-block jumps stop.
-    await prisma.$executeRawUnsafe(`ALTER TABLE \`${sqlTable}\` AUTO_ID_CACHE 1`);
-    console.log(`${table}: moved ${moves.length}, next id = ${nextAutoIncrement}, AUTO_ID_CACHE = 1`);
+    // NOTE: `ALTER TABLE ... AUTO_ID_CACHE 1` would make allocation strictly
+    // sequential and stop the jumps for good, but TiDB rejects it on an existing
+    // table ("Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying
+    // implementation is different") — cache=1 uses a different allocator, so it
+    // can only be set when the table is created. Ids will therefore jump again
+    // after a TiDB restart; re-run this script to compact them.
+    console.log(`${table}: moved ${moves.length}, next id = ${nextAutoIncrement}`);
   }
 
   console.log("\nverifying...");
