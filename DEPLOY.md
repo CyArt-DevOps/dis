@@ -26,6 +26,12 @@ Notes that matter when changing the schema:
 - `remindersSent` is `VARCHAR(500)` on purpose: MySQL forbids `DEFAULT` on TEXT.
 - The attendance upsert in `services/attendance.ts` is hand-written MySQL
   (`ON DUPLICATE KEY UPDATE`, `LEAST()`), not portable SQL.
+- `DATABASE_URL` must carry `&connect_timeout=30&pool_timeout=30`. TiDB Starter
+  scales to zero when idle and the first connection waits for it to resume;
+  Prisma's 5s default surfaces that as `P1001: Can't reach database server`.
+- `connectDb` retries unreachable-database errors indefinitely with capped
+  backoff. Nothing restarts this process if it exits, so a transient blip used
+  to take the bot down until someone pressed Start.
 
 `prisma/data/app.db` on the host is the pre-cutover SQLite file, kept as a
 rollback. It stops being current the moment the bot runs on TiDB.
