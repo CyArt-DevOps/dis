@@ -32,7 +32,11 @@
     "postinstall": "prisma generate",
     "db:snapshot": "tsx scripts/db-snapshot.ts",
     "db:tidb:copy": "tsx scripts/migrate-to-tidb.ts",
-    "db:sqlite:generate": "prisma generate --schema prisma/sqlite-source.prisma"
+    "db:sqlite:generate": "prisma generate --schema prisma/sqlite-source.prisma",
+    "db:backup": "tsx scripts/backup-db.ts",
+    "db:restore": "tsx scripts/restore-db.ts",
+    "db:verify": "tsx scripts/verify-backup.ts",
+    "start:supervised": "node scripts/supervise.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
