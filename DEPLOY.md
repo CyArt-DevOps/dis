@@ -51,6 +51,12 @@ Notes that matter when changing the schema:
 - `remindersSent` is `VARCHAR(500)` on purpose: MySQL forbids `DEFAULT` on TEXT.
 - The attendance upsert in `services/attendance.ts` is hand-written MySQL
   (`ON DUPLICATE KEY UPDATE`, `LEAST()`), not portable SQL.
+- `Ticket`, `LeaveRequest` and `Meeting` are created with `AUTO_ID_CACHE = 1`.
+  TiDB otherwise allocates ids in blocks of 30000 and starts a new block after
+  every restart, which is how Ticket once ran 447 -> 30002 -> 60002. The option
+  cannot be switched on afterwards, only set at CREATE TABLE, so if these tables
+  are ever rebuilt (a fresh database from `prisma migrate deploy`) run
+  `npm run db:fix-autoid -- --apply` to restore it, with every bot stopped.
 - `DATABASE_URL` must carry `&connect_timeout=30&pool_timeout=30`. TiDB Starter
   scales to zero when idle and the first connection waits for it to resume;
   Prisma's 5s default surfaces that as `P1001: Can't reach database server`.
