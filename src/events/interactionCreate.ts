@@ -20,21 +20,32 @@ async function acknowledge(interaction: Interaction, mode: AckMode): Promise<voi
 
 /**
  * Discord discards an interaction that is not acknowledged within 3 seconds and
- * the user sees "The application didn't respond in time". Since the database
- * moved to TiDB every query costs a network round trip, so handlers that were
- * comfortably fast against a local file are no longer obviously so. Log the
- * ones that get close, with the name of the handler, so a recurrence points
- * straight at the culprit instead of needing a reproduction.
+ * the user sees "The application didn't respond in time".
+ *
+ * What matters is time to ACKNOWLEDGEMENT, not total handler time. A handler
+ * that defers first has 15 minutes afterwards, so a deferred command taking 3s
+ * is slow but perfectly safe — warning about it buries the real failures in
+ * noise. Only an unacknowledged interaction is in danger.
  */
-const SLOW_HANDLER_MS = 2000;
+const ACK_DANGER_MS = 2000;
+/** Total runtime worth a note, well clear of anything user-visible. */
+const SLOW_TOTAL_MS = 10_000;
 
 export function registerInteractionCreate(client: Client): void {
   client.on(Events.InteractionCreate, async (interaction: Interaction) => {
     const startedAt = Date.now();
     const warnIfSlow = (name: string) => {
       const ms = Date.now() - startedAt;
-      if (ms >= SLOW_HANDLER_MS) {
-        logger.warn({ handler: name, ms }, "Interaction handler close to the 3s limit");
+      const acked =
+        interaction.isRepliable() && (interaction.deferred || interaction.replied);
+      if (!acked && ms >= ACK_DANGER_MS) {
+        // This one really can hit "didn't respond in time".
+        logger.warn(
+          { handler: name, ms },
+          "Interaction ran this long WITHOUT acknowledging — close to the 3s limit"
+        );
+      } else if (ms >= SLOW_TOTAL_MS) {
+        logger.info({ handler: name, ms, acked }, "Slow interaction (already acknowledged)");
       }
     };
     try {
