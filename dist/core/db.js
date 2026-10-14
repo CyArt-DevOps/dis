@@ -1,13 +1,41 @@
 import { PrismaClient } from "@prisma/client";
 import { logger } from "./logger.js";
-export const prisma = new PrismaClient({
+const base = new PrismaClient({
     log: [
         { level: "warn", emit: "event" },
         { level: "error", emit: "event" },
     ],
 });
-prisma.$on("warn", (e) => logger.warn({ prisma: e.message }, "Prisma warn"));
-prisma.$on("error", (e) => logger.error({ prisma: e.message }, "Prisma error"));
+base.$on("warn", (e) => logger.warn({ prisma: e.message }, "Prisma warn"));
+base.$on("error", (e) => logger.error({ prisma: e.message }, "Prisma error"));
+/**
+ * Writes that are NOT safe to repeat blindly. A dropped connection usually means
+ * the statement never committed, but "usually" is not good enough for an insert:
+ * a retry after a commit we never saw acknowledged would create a second ticket
+ * or a second leave request. Those fail loudly instead, and the user retries.
+ * Everything else here is a read, an update, an upsert or a delete — all
+ * idempotent, so repeating them is safe.
+ */
+const NON_IDEMPOTENT = new Set(["create", "createMany", "createManyAndReturn"]);
+/**
+ * Retry transient database failures for every query, not just the handful of
+ * call sites that remembered to ask for it.
+ *
+ * TiDB's serverless gateway closes pooled connections it considers idle, which
+ * surfaces mid-operation as "Server has closed the connection." On SQLite there
+ * was no connection to lose, so most call sites never considered the case —
+ * which is why a dropped connection took out meeting attendance tracking
+ * (`onMeetingStart failed`) rather than being retried and forgotten.
+ */
+export const prisma = base.$extends({
+    query: {
+        async $allOperations({ operation, args, query }) {
+            if (NON_IDEMPOTENT.has(operation))
+                return query(args);
+            return withDbRetry(() => query(args));
+        },
+    },
+});
 /**
  * TiDB needs no session tuning here.
  *
@@ -40,11 +68,11 @@ const MAX_RETRY_DELAY_MS = 60_000;
 export async function connectDb(attempts = 0) {
     for (let i = 1;; i++) {
         try {
-            await prisma.$connect();
+            await base.$connect();
             // One cheap round trip, so a bad DATABASE_URL or a blocked egress port
             // fails here with a clear message instead of on the first real query.
             const started = Date.now();
-            await prisma.$queryRawUnsafe("SELECT 1");
+            await base.$queryRawUnsafe("SELECT 1");
             logger.info({ rttMs: Date.now() - started, attempt: i }, "Database connected");
             return;
         }
@@ -62,10 +90,15 @@ export async function connectDb(attempts = 0) {
     }
 }
 export async function disconnectDb() {
-    await prisma.$disconnect();
+    await base.$disconnect();
 }
 /** Prisma codes worth retrying: pool/query timeout and an open transaction conflict. */
-const TRANSIENT_CODES = new Set(["P1008", "P2034", "P1017"]);
+const TRANSIENT_CODES = new Set([
+    "P1008", // operations timed out
+    "P2034", // transaction write conflict
+    "P1017", // server has closed the connection
+    "P2024", // timed out fetching a connection from the pool
+]);
 /**
  * Transient now means something different than it did on SQLite: instead of a
  * locked file, it is a deadlock, a lock-wait timeout, or a connection the
@@ -75,8 +108,11 @@ function isTransient(err) {
     const e = err;
     if (e?.code && TRANSIENT_CODES.has(e.code))
         return true;
+    // Match on text too: the serverless gateway's dropped-connection error
+    // surfaces as "Server has closed the connection." and does not always carry
+    // a code we can rely on.
     return Boolean(e?.message &&
-        /deadlock|lock wait timeout|server has gone away|connection (?:is )?closed|ECONNRESET|write epoll/i.test(e.message));
+        /deadlock|lock wait timeout|server has gone away|closed the connection|connection (?:is )?closed|connection reset|ECONNRESET|EPIPE|ETIMEDOUT|write epoll/i.test(e.message));
 }
 /**
  * Retry a database operation through transient lock contention.
