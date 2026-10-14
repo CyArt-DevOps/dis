@@ -4,17 +4,17 @@ Production target for the CyArt intern bot and its dashboard.
 
 | Piece | Value |
 |---|---|
-| Panel | https://dash.monkey-network.xyz · server **Intern Bot** (`18955455`) |
+| Panel | https://dash.monkey-network.xyz · server **Intern Bot** (`951e1887`) |
 | Allocation | `us.monkey-network.xyz:5015` (1 of 1) |
 | Repo | `https://github.com/CyArt-DevOps/dis` (public, branch `main`) |
 | Runtime | Pterodactyl Node.js egg, Docker image **Nodejs 25** |
 | Dashboard URL | https://dis.cyart.io |
 | Database | TiDB Cloud Starter `cyart-intern-bot`, us-east-1, free ($0 spend limit) |
 
-## Running on a laptop (current situation)
+## Running on a laptop (fallback)
 
-MonkeyBytes is suspended, so the bot runs locally and `dis.cyart.io` is down.
-Two things matter while that is true:
+If the host is unavailable the bot can run from a laptop. Two things matter
+while that is true:
 
 ```bash
 npm run start:supervised   # restarts the bot if it crashes; logs to logs/
@@ -29,6 +29,12 @@ control. Take a backup daily. `db:verify` restores into a scratch database and
 drops it, so it never touches production.
 
 Sleep is the other hazard — a sleeping laptop stops recording attendance.
+
+> **The server id changes if MonkeyBytes recreates the container.** It was
+> `18955455` until a suspension in October 2026, then `951e1887`. A recreated
+> container is empty: startup variables partly survive, but the repo must be
+> reinstalled, `.env` recreated, and the whitelabel domain re-added. The
+> database is unaffected — it lives in TiDB, which is the point of that move.
 
 ## Database
 
