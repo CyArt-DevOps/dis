@@ -160,12 +160,15 @@ export async function dissolveProject(guild, key) {
         at: new Date().toISOString(),
     };
     const file = writeBackup(`dissolve-${key}`, snapshot);
-    for (const c of guild.channels.cache.values()) {
+    // Collect first, children before categories: deleting a category while
+    // iterating orphans its children (parent becomes null) and they get skipped.
+    const targets = [...guild.channels.cache.values()].filter((c) => {
         const cat = c.type === ChannelType.GuildCategory ? c : c.parent;
-        if (!cat || !catNames.has(cat.name))
-            continue;
+        return !!cat && catNames.has(cat.name);
+    });
+    targets.sort((a, b) => Number(a.type === ChannelType.GuildCategory) - Number(b.type === ChannelType.GuildCategory));
+    for (const c of targets)
         await c.delete("Project dissolve").catch(() => { });
-    }
     for (const role of guild.roles.cache.values()) {
         if (roleSet.has(role.name))
             await role.delete("Project dissolve").catch(() => { });

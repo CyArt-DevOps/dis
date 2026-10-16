@@ -14,15 +14,6 @@
       "moduleVoice": false
     },
     {
-      "key": "chain-discovery",
-      "name": "Chain Discovery",
-      "modules": 0,
-      "podsPerModule": 0,
-      "active": true,
-      "moduleChannels": false,
-      "moduleVoice": false
-    },
-    {
       "key": "ctem",
       "name": "CTEM",
       "modules": 0,
@@ -161,13 +152,13 @@
       "moduleVoice": false
     },
     {
-      "moduleChannels": false,
-      "moduleVoice": false,
       "key": "Op-Sour",
       "name": "Op Sour",
       "modules": 2,
       "podsPerModule": 10,
-      "active": true
+      "active": true,
+      "moduleChannels": false,
+      "moduleVoice": false
     }
   ],
   "nicknameFormat": "{fullName} | {project}",

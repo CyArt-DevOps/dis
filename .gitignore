@@ -36,5 +36,7 @@ package-lock.json
 
 # Database backups: real member data, never committed.
 backups/
+# Channel message exports (scripts/export-project.ts): real member messages.
+data/exports/
 logs/
 renumber-map.json
