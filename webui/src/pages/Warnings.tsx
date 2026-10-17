@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { dateOf, dayLabel, get, post, type WarningRow, type WarningsData } from "../api";
+import { dateOf, dayLabel, get, type WarningRow, type WarningsData } from "../api";
+import { useHrPost } from "../lib/hr";
 import { useAsync } from "../lib/useAsync";
 import { navigate } from "../lib/router";
 import {
@@ -21,22 +22,6 @@ import {
 } from "../components/ui";
 
 type Tab = "queue" | "all" | "termination" | "issue";
-
-const NAME_KEY = "dash.approvedBy";
-function readName(): string {
-  try {
-    return localStorage.getItem(NAME_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-function saveName(v: string) {
-  try {
-    localStorage.setItem(NAME_KEY, v.trim());
-  } catch {
-    /* not remembered */
-  }
-}
 
 const STATUS: Record<string, { label: string; tone: Tone }> = {
   proposed: { label: "Awaiting review", tone: "info" },
@@ -71,6 +56,7 @@ export function WarningsPage() {
   const [tab, setTab] = useState<Tab>("queue");
   const [toast, setToast] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const hp = useHrPost();
 
   const flash = (tone: "good" | "bad", text: string) => {
     setToast({ tone, text });
@@ -126,7 +112,7 @@ export function WarningsPage() {
               disabled={busy !== null}
               onClick={() =>
                 run("check", async () => {
-                  const r = await post<{ checked: number; created: number }>("/api/warnings/run-check", {});
+                  const r = await hp<{ checked: number; created: number }>("/api/warnings/run-check", {}, "Run the attendance check");
                   return `Checked ${r.checked} members · ${r.created} new warning${r.created === 1 ? "" : "s"} drafted`;
                 })
               }
@@ -176,26 +162,26 @@ export function WarningsPage() {
           busy={busy}
           canSend={Boolean(data?.botConnected)}
           onSend={(x) => run(`send-${x.id}`, async () => {
-            const r = await post<{ status: string }>(`/api/warnings/${x.id}/send`, {});
+            const r = await hp<{ status: string }>(`/api/warnings/${x.id}/send`, {}, `Send warning to ${x.fullName}`);
             return r.status === "sent" ? `Warning DMed to ${x.fullName}` : `${x.fullName} has DMs closed; the warning is recorded`;
           })}
           onDismiss={(x) => run(`dismiss-${x.id}`, async () => {
-            await post(`/api/warnings/${x.id}/dismiss`, {});
+            await hp(`/api/warnings/${x.id}/dismiss`, {}, `Dismiss warning #${x.id}`);
             return `Draft for ${x.fullName} dismissed`;
           })}
           onSendAll={() => run("send-all", async () => {
-            const r = await post<{ queued: number }>("/api/warnings/send-all", {});
+            const r = await hp<{ queued: number }>("/api/warnings/send-all", {}, "Send all drafted warnings");
             return `Sending ${r.queued} warnings in the background (about ${Math.ceil((r.queued * 1.5) / 60)} min). Refresh to follow.`;
           })}
         />
       ) : tab === "all" ? (
         <AllTab rows={w.filter((x) => x.status !== "proposed")} limit={limit} busy={busy} canSend={Boolean(data?.botConnected)}
           onRetry={(x) => run(`send-${x.id}`, async () => {
-            const r = await post<{ status: string }>(`/api/warnings/${x.id}/send`, {});
+            const r = await hp<{ status: string }>(`/api/warnings/${x.id}/send`, {}, `Send warning to ${x.fullName}`);
             return r.status === "sent" ? `Warning DMed to ${x.fullName}` : `Still couldn't DM ${x.fullName}`;
           })}
           onDismiss={(x) => run(`dismiss-${x.id}`, async () => {
-            await post(`/api/warnings/${x.id}/dismiss`, {});
+            await hp(`/api/warnings/${x.id}/dismiss`, {}, `Dismiss warning #${x.id}`);
             return `Warning #${x.id} dismissed (no longer counts)`;
           })}
         />
@@ -442,15 +428,14 @@ function AllTab({
 
 function TerminationTab({ data, onDone }: { data: WarningsData; onDone: (t: { tone: "good" | "bad"; text: string }) => void }) {
   const [open, setOpen] = useState<string | null>(null);
-  const [by, setBy] = useState(readName);
+  const hp = useHrPost();
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
 
   const terminate = async (userId: string, name: string) => {
     setBusy(true);
     try {
-      saveName(by);
-      const r = await post<{ kicked: boolean; error: string | null }>(`/api/members/${userId}/terminate`, { by, confirm });
+      const r = await hp<{ kicked: boolean; error: string | null }>(`/api/members/${userId}/terminate`, { confirm }, `Terminate ${name}`);
       onDone(r.kicked ? { tone: "good", text: `${name} was notified and removed from the server.` } : { tone: "bad", text: `Recorded, but not removed: ${r.error}` });
       setOpen(null);
       setConfirm("");
@@ -486,13 +471,7 @@ function TerminationTab({ data, onDone }: { data: WarningsData; onDone: (t: { to
                     </div>
                   </div>
                   {open === c.userId ? (
-                    <div className="mt-3 grid gap-2 rounded-xl border border-rose-400/25 bg-rose-400/5 p-3 sm:grid-cols-[1fr_1fr_auto]">
-                      <input
-                        value={by}
-                        onChange={(e) => setBy(e.target.value)}
-                        placeholder="Your name"
-                        className="h-9 rounded-full border border-line-strong bg-panel px-3.5 text-sm outline-none placeholder:text-dim"
-                      />
+                    <div className="mt-3 grid gap-2 rounded-xl border border-rose-400/25 bg-rose-400/5 p-3 sm:grid-cols-[1fr_auto]">
                       <input
                         value={confirm}
                         onChange={(e) => setConfirm(e.target.value)}
@@ -501,7 +480,7 @@ function TerminationTab({ data, onDone }: { data: WarningsData; onDone: (t: { to
                       />
                       <button
                         type="button"
-                        disabled={busy || confirm !== "TERMINATE" || by.trim().length < 2}
+                        disabled={busy || confirm !== "TERMINATE"}
                         onClick={() => terminate(c.userId, c.fullName)}
                         className="h-9 rounded-full bg-rose-500 px-4 text-sm font-semibold text-white hover:bg-rose-400 disabled:opacity-40"
                       >
@@ -548,7 +527,7 @@ function IssueTab({ botConnected, onIssued, onError }: { botConnected: boolean; 
   const [picked, setPicked] = useState<{ id: string; fullName: string; project: string | null; batch: string | null } | null>(null);
   const [kind, setKind] = useState("conduct");
   const [reason, setReason] = useState("");
-  const [by, setBy] = useState(readName);
+  const hp = useHrPost();
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -571,8 +550,7 @@ function IssueTab({ botConnected, onIssued, onError }: { botConnected: boolean; 
     if (!picked) return onError("Pick a member.");
     setBusy(true);
     try {
-      saveName(by);
-      const r = await post<{ id: number; status: string }>("/api/warnings", { userId: picked.id, reason, kind, issuedBy: by });
+      const r = await hp<{ id: number; status: string }>("/api/warnings", { userId: picked.id, reason, kind }, `Issue a warning to ${picked.fullName}`);
       onIssued(
         r.status === "sent"
           ? `Warning #${r.id} DMed to ${picked.fullName}`
@@ -652,17 +630,8 @@ function IssueTab({ botConnected, onIssued, onError }: { botConnected: boolean; 
               className="mt-1.5 w-full resize-none rounded-xl border border-line-strong bg-panel px-3 py-2 text-sm text-fg outline-none placeholder:text-dim"
             />
           </label>
-          <label className="block text-xs text-muted">
-            Issued by
-            <input
-              value={by}
-              onChange={(e) => setBy(e.target.value)}
-              maxLength={80}
-              placeholder="Your name"
-              className="mt-1.5 h-9 w-full rounded-full border border-line-strong bg-panel px-3.5 text-sm outline-none placeholder:text-dim"
-            />
-          </label>
-          <Button variant="primary" className="w-full" disabled={busy || !picked || reason.trim().length < 5 || by.trim().length < 2} onClick={submit}>
+          <p className="text-[11px] text-dim">You will be asked for your HR name and password; the warning is issued under your name.</p>
+          <Button variant="primary" className="w-full" disabled={busy || !picked || reason.trim().length < 5} onClick={submit}>
             {busy ? "Sending…" : botConnected ? "Send formal warning" : "Save draft"}
           </Button>
         </div>

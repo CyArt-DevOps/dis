@@ -110,6 +110,8 @@ model Warn {
   acknowledgedAt DateTime?
   dmChannelId String? @db.VarChar(32)
   dmMessageId String? @db.VarChar(32)
+  // Verified HR member who sent or dismissed it
+  reviewedBy String? @db.VarChar(80)
 
   @@index([guildId, userId])
   @@index([guildId, status])
@@ -245,4 +247,14 @@ model ScheduledMessage {
 
   @@index([status, sendAt])
   @@index([guildId, authorId, status])
+}
+
+/// HR members allowed to sign off sensitive dashboard actions with their own password.
+model HrUser {
+  id           Int       @id @default(autoincrement())
+  name         String    @unique @db.VarChar(80)
+  passwordHash String    @db.VarChar(255)
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
 }

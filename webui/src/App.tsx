@@ -11,6 +11,7 @@ import { MeetingsPage } from "./pages/Meetings";
 import { MeetingDetailPage } from "./pages/MeetingDetail";
 import { WarningsPage } from "./pages/Warnings";
 import { HolidaysPage } from "./pages/Holidays";
+import { HrBadge, HrProvider } from "./lib/hr";
 
 const ICON: Record<string, ReactNode> = {
   overview: <path d="M3 13h4v8H3zM10 8h4v13h-4zM17 3h4v18h-4z" />,
@@ -117,6 +118,7 @@ export default function App() {
     (name === "meetings" && route.name === "meeting");
 
   return (
+    <HrProvider>
     <div className="min-h-full lg:flex">
       {/* Sidebar (desktop) */}
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line bg-panel/60 px-4 py-5 lg:flex">
@@ -138,8 +140,10 @@ export default function App() {
             </button>
           ))}
         </nav>
+        <div className="mt-auto space-y-3">
+          <HrBadge />
         {filters.data ? (
-          <div className="mt-auto rounded-xl border border-line bg-panel p-3 text-xs text-muted">
+          <div className="rounded-xl border border-line bg-panel p-3 text-xs text-muted">
             <div className="mb-1.5 text-[11px] font-medium tracking-[0.08em] text-dim uppercase">Attendance rules</div>
             <div className="space-y-1">
               <div className="flex justify-between">
@@ -159,6 +163,7 @@ export default function App() {
             </div>
           </div>
         ) : null}
+        </div>
         <div className="mt-3 px-1 text-[11px] text-dim">{config.data ? `${config.data.timezone} · ${config.data.today}` : ""}</div>
       </aside>
 
@@ -219,5 +224,6 @@ export default function App() {
         </main>
       </div>
     </div>
+    </HrProvider>
   );
 }

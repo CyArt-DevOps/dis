@@ -10,6 +10,7 @@ import { LeaveInputError, grantManualLeave, revokeManualLeave } from "../service
 import { HolidayInputError, addHoliday, listHolidays, removeHoliday } from "../services/holidays.js";
 import { WarningError, createManualWarning, dismissWarning, listTerminations, listWarnings, runHoursSweep, sendAllProposed, sendWarning, terminateMember, terminationCandidates, } from "../services/warnings.js";
 import { clearCalendarCache } from "../services/calendar.js";
+import { HrAuthError, activeHrNames, hrName, requireHr, verifyHr } from "../services/hrUsers.js";
 import { clearInsightsCache } from "../services/insights.js";
 import { prisma } from "../core/db.js";
 import { shiftDayKey, tzDateKey, tzName } from "../lib/time.js";
@@ -166,10 +167,10 @@ const sameOrigin = (req, res, next) => {
     next();
 };
 /** HR grants approved leave for specific days from the profile page. */
-app.post("/api/profile/:id/leave", express.json({ limit: "8kb" }), sameOrigin, async (req, res) => {
+app.post("/api/profile/:id/leave", express.json({ limit: "8kb" }), sameOrigin, requireHr, async (req, res) => {
     try {
-        const out = await grantManualLeave(guildOf(req), String(req.params.id), req.body ?? {});
-        logger.info({ userId: req.params.id, leave: out.id, days: out.days }, "Leave granted from dashboard");
+        const out = await grantManualLeave(guildOf(req), String(req.params.id), { ...(req.body ?? {}), approvedBy: hrName(req) });
+        logger.info({ userId: req.params.id, leave: out.id, days: out.days, hr: hrName(req) }, "Leave granted from dashboard");
         res.json(out);
     }
     catch (err) {
@@ -179,10 +180,10 @@ app.post("/api/profile/:id/leave", express.json({ limit: "8kb" }), sameOrigin, a
             throw err;
     }
 });
-app.post("/api/profile/:id/leave/:leaveId/revoke", express.json({ limit: "1kb" }), sameOrigin, async (req, res) => {
+app.post("/api/profile/:id/leave/:leaveId/revoke", express.json({ limit: "1kb" }), sameOrigin, requireHr, async (req, res) => {
     try {
         await revokeManualLeave(guildOf(req), String(req.params.id), Number(req.params.leaveId));
-        logger.info({ userId: req.params.id, leave: req.params.leaveId }, "Dashboard leave revoked");
+        logger.info({ userId: req.params.id, leave: req.params.leaveId, hr: hrName(req) }, "Dashboard leave revoked");
         res.json({ ok: true });
     }
     catch (err) {
@@ -202,24 +203,37 @@ function action(fn) {
             if (err instanceof WarningError || err instanceof HolidayInputError) {
                 res.status(400).json({ error: err.message });
             }
+            else if (err instanceof HrAuthError) {
+                res.status(err.status).json({ error: err.message, hrAuth: err.status === 401 });
+            }
             else
                 throw err;
         }
     };
 }
 const jsonBody = express.json({ limit: "8kb" });
+// ----- HR sign-off: names to pick from, and password verification
+app.get("/api/hr/names", async (_req, res) => {
+    res.json(await activeHrNames());
+});
+app.post("/api/hr/verify", jsonBody, sameOrigin, action(async (req) => {
+    const b = (req.body ?? {});
+    // Behind Cloudflare the client IP is in CF-Connecting-IP; fall back to the socket.
+    const ip = String(req.headers["cf-connecting-ip"] ?? req.ip ?? "unknown");
+    return verifyHr(String(b.name ?? ""), String(b.password ?? ""), ip);
+}));
 // ----- Public holidays
 app.get("/api/holidays", async (req, res) => {
     res.json(await listHolidays(guildOf(req)));
 });
-app.post("/api/holidays", jsonBody, sameOrigin, action(async (req) => {
-    const row = await addHoliday(guildOf(req), req.body ?? {});
+app.post("/api/holidays", jsonBody, sameOrigin, requireHr, action(async (req) => {
+    const row = await addHoliday(guildOf(req), { ...(req.body ?? {}), addedBy: hrName(req) });
     clearCalendarCache();
     clearInsightsCache();
-    logger.info({ day: row.day, name: row.name }, "Holiday added from dashboard");
+    logger.info({ day: row.day, name: row.name, hr: hrName(req) }, "Holiday added from dashboard");
     return row;
 }));
-app.post("/api/holidays/:id/delete", jsonBody, sameOrigin, action(async (req) => {
+app.post("/api/holidays/:id/delete", jsonBody, sameOrigin, requireHr, action(async (req) => {
     await removeHoliday(guildOf(req), Number(req.params.id));
     clearCalendarCache();
     clearInsightsCache();
@@ -233,15 +247,13 @@ app.get("/api/warnings", async (req, res) => {
     ]);
     res.json({ ...data, candidates, terminations });
 });
-app.post("/api/warnings", jsonBody, sameOrigin, action((req) => createManualWarning(guildOf(req), req.body ?? {})));
-app.post("/api/warnings/:id/send", jsonBody, sameOrigin, action((req) => sendWarning(Number(req.params.id))));
-app.post("/api/warnings/:id/dismiss", jsonBody, sameOrigin, action((req) => dismissWarning(Number(req.params.id), guildOf(req))));
-app.post("/api/warnings/send-all", jsonBody, sameOrigin, action((req) => sendAllProposed(guildOf(req))));
-app.post("/api/warnings/run-check", jsonBody, sameOrigin, action((req) => runHoursSweep(guildOf(req))));
-app.post("/api/members/:id/terminate", jsonBody, sameOrigin, action(async (req) => {
-    const by = String(req.body?.by ?? "").trim();
-    if (by.length < 2)
-        throw new WarningError("Enter your name to confirm the termination.");
+app.post("/api/warnings", jsonBody, sameOrigin, requireHr, action((req) => createManualWarning(guildOf(req), { ...(req.body ?? {}), issuedBy: hrName(req) })));
+app.post("/api/warnings/:id/send", jsonBody, sameOrigin, requireHr, action((req) => sendWarning(Number(req.params.id), hrName(req))));
+app.post("/api/warnings/:id/dismiss", jsonBody, sameOrigin, requireHr, action((req) => dismissWarning(Number(req.params.id), guildOf(req), hrName(req))));
+app.post("/api/warnings/send-all", jsonBody, sameOrigin, requireHr, action((req) => sendAllProposed(guildOf(req), hrName(req))));
+app.post("/api/warnings/run-check", jsonBody, sameOrigin, requireHr, action((req) => runHoursSweep(guildOf(req))));
+app.post("/api/members/:id/terminate", jsonBody, sameOrigin, requireHr, action(async (req) => {
+    const by = hrName(req);
     if (req.body?.confirm !== "TERMINATE") {
         throw new WarningError('Type TERMINATE to confirm.');
     }

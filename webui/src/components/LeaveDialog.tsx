@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { dayLabel, monthLabel, post, shiftMonth } from "../api";
+import { dayLabel, monthLabel, shiftMonth } from "../api";
+import { useHrPost } from "../lib/hr";
 import { Badge, Button, Select, cx } from "./ui";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const APPROVER_KEY = "dash.approvedBy";
 
 function daysOf(month: string): string[] {
   const [y, m] = month.split("-").map(Number);
@@ -13,14 +13,6 @@ function daysOf(month: string): string[] {
 
 function isoWeekday(day: string): number {
   return new Date(day + "T00:00:00Z").getUTCDay() || 7;
-}
-
-function readApprover(): string {
-  try {
-    return localStorage.getItem(APPROVER_KEY) ?? "";
-  } catch {
-    return "";
-  }
 }
 
 /**
@@ -51,7 +43,7 @@ export function LeaveDialog({
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [type, setType] = useState("casual");
   const [reason, setReason] = useState("");
-  const [approvedBy, setApprovedBy] = useState(readApprover);
+  const hp = useHrPost();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,17 +70,12 @@ export function LeaveDialog({
     setError(null);
     if (!sorted.length) return setError("Pick at least one date.");
     if (reason.trim().length < 3) return setError("Add a reason (at least 3 characters).");
-    if (approvedBy.trim().length < 2) return setError("Enter your name as the approving HR member.");
     setBusy(true);
     try {
-      try {
-        localStorage.setItem(APPROVER_KEY, approvedBy.trim());
-      } catch {
-        /* storage unavailable — the name just isn't remembered */
-      }
-      const out = await post<{ id: number; days: string[]; excusedMeetings: number }>(
+      const out = await hp<{ id: number; days: string[]; excusedMeetings: number }>(
         `/api/profile/${encodeURIComponent(userId)}/leave`,
-        { dates: sorted, type, reason: reason.trim(), approvedBy: approvedBy.trim() }
+        { dates: sorted, type, reason: reason.trim() },
+        `Approve leave for ${name}`
       );
       onGranted(
         `Leave #${out.id} approved for ${out.days.length} day${out.days.length === 1 ? "" : "s"}` +
@@ -242,16 +229,7 @@ export function LeaveDialog({
               />
             </label>
 
-            <label className="text-xs text-muted">
-              Approved by (HR)
-              <input
-                value={approvedBy}
-                onChange={(e) => setApprovedBy(e.target.value)}
-                maxLength={60}
-                placeholder="Your name"
-                className="mt-1.5 h-9 w-full rounded-full border border-line-strong bg-panel px-3.5 text-sm text-fg outline-none placeholder:text-dim focus-visible:ring-2 focus-visible:ring-white/30"
-              />
-            </label>
+            <p className="text-[11px] text-dim">You will be asked for your HR name and password to approve.</p>
 
             {error ? <p className="rounded-lg border border-rose-400/25 bg-rose-400/5 px-3 py-2 text-xs text-rose-300">{error}</p> : null}
           </div>

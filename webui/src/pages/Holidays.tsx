@@ -1,23 +1,14 @@
 import { useState } from "react";
-import { dayLabel, get, post, type Holiday } from "../api";
+import { dayLabel, get, type Holiday } from "../api";
+import { useHrPost } from "../lib/hr";
 import { useAsync } from "../lib/useAsync";
 import { Badge, Button, Card, CardHeader, Empty, ErrorNote, PageHeader, Skeleton, Stat, StatStrip } from "../components/ui";
-
-const NAME_KEY = "dash.approvedBy";
-
-function readName(): string {
-  try {
-    return localStorage.getItem(NAME_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
 
 export function HolidaysPage({ today }: { today: string }) {
   const { data, error, loading, reload } = useAsync(() => get<Holiday[]>("/api/holidays"), []);
   const [day, setDay] = useState("");
   const [name, setName] = useState("");
-  const [by, setBy] = useState(readName);
+  const hp = useHrPost();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
 
@@ -30,12 +21,7 @@ export function HolidaysPage({ today }: { today: string }) {
     setMsg(null);
     setBusy(true);
     try {
-      try {
-        localStorage.setItem(NAME_KEY, by.trim());
-      } catch {
-        /* not remembered */
-      }
-      const row = await post<Holiday>("/api/holidays", { day, name, addedBy: by });
+      const row = await hp<Holiday>("/api/holidays", { day, name }, `Add holiday ${name}`);
       setMsg({ tone: "good", text: `${row.name} on ${dayLabel(row.day, { weekday: "long", day: "numeric", month: "long" })} added. Nobody is marked absent that day.` });
       setDay("");
       setName("");
@@ -50,7 +36,7 @@ export function HolidaysPage({ today }: { today: string }) {
   const remove = async (h: Holiday) => {
     if (!window.confirm(`Remove ${h.name} (${h.day})? That day becomes a normal working day again.`)) return;
     try {
-      await post(`/api/holidays/${h.id}/delete`, {});
+      await hp(`/api/holidays/${h.id}/delete`, {}, `Remove holiday ${h.name}`);
       setMsg({ tone: "good", text: `${h.name} removed.` });
       reload();
     } catch (e) {
@@ -116,16 +102,6 @@ export function HolidaysPage({ today }: { today: string }) {
                 onChange={(e) => setName(e.target.value)}
                 maxLength={120}
                 placeholder="e.g. Diwali"
-                className="mt-1.5 h-9 w-full rounded-full border border-line-strong bg-panel px-3.5 text-sm text-fg outline-none placeholder:text-dim"
-              />
-            </label>
-            <label className="block text-xs text-muted">
-              Added by
-              <input
-                value={by}
-                onChange={(e) => setBy(e.target.value)}
-                maxLength={80}
-                placeholder="Your name"
                 className="mt-1.5 h-9 w-full rounded-full border border-line-strong bg-panel px-3.5 text-sm text-fg outline-none placeholder:text-dim"
               />
             </label>

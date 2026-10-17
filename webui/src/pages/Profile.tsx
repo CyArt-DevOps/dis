@@ -6,7 +6,6 @@ import {
   get,
   hm,
   monthLabel,
-  post,
   shiftMonth,
   type FilterOptions,
   type Profile,
@@ -18,6 +17,7 @@ import { MonthCalendar } from "../components/MonthCalendar";
 import { Legend, VIOLATION_META } from "../components/status";
 import { DailyHours, JoinTimeline } from "../components/charts";
 import { LeaveDialog } from "../components/LeaveDialog";
+import { useHrPost } from "../lib/hr";
 import {
   Avatar,
   Badge,
@@ -66,6 +66,7 @@ export function ProfilePage({
   );
   const [filter, setFilter] = useState<Filter>("all");
   const [granting, setGranting] = useState(false);
+  const hp = useHrPost();
   const [toast, setToast] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
 
   // Every day already covered by an approved leave, so the picker can flag them.
@@ -93,7 +94,7 @@ export function ProfilePage({
   const revoke = async (leaveId: number) => {
     if (!window.confirm("Revoke this leave? Those days count against attendance again.")) return;
     try {
-      await post(`/api/profile/${encodeURIComponent(userId)}/leave/${leaveId}/revoke`, {});
+      await hp(`/api/profile/${encodeURIComponent(userId)}/leave/${leaveId}/revoke`, {}, `Revoke leave #${leaveId}`);
       flash("good", `Leave #${leaveId} revoked`);
       reload();
     } catch (e) {

@@ -119,7 +119,7 @@ export async function runHoursSweep(guildId) {
     return out;
 }
 // ------------------------------------------------------------------ sending
-export async function sendWarning(id) {
+export async function sendWarning(id, reviewedBy) {
     const w = await prisma.warn.findUnique({ where: { id } });
     if (!w)
         throw new WarningError("Warning not found.");
@@ -161,20 +161,20 @@ export async function sendWarning(id) {
         const msg = await user.send({ embeds: [embed], components: [row] });
         await prisma.warn.update({
             where: { id },
-            data: { status: "sent", sentAt: new Date(), ackDueAt, dmChannelId: msg.channelId, dmMessageId: msg.id },
+            data: { status: "sent", sentAt: new Date(), ackDueAt, dmChannelId: msg.channelId, dmMessageId: msg.id, reviewedBy },
         });
         return { status: "sent" };
     }
     catch (err) {
         // DMs closed or user gone: the warning still stands on record.
         logger.warn({ err, warn: id }, "Warning DM failed");
-        await prisma.warn.update({ where: { id }, data: { status: "dm-failed", sentAt: new Date(), ackDueAt } });
+        await prisma.warn.update({ where: { id }, data: { status: "dm-failed", sentAt: new Date(), ackDueAt, reviewedBy } });
         return { status: "dm-failed" };
     }
 }
 let bulkRunning = false;
 /** Send every drafted warning, spaced out so Discord's DM limits aren't hit. */
-export async function sendAllProposed(guildId) {
+export async function sendAllProposed(guildId, reviewedBy) {
     if (!botClient())
         throw new WarningError("The bot isn't connected in this process, so DMs can't be sent.");
     if (bulkRunning)
@@ -183,7 +183,7 @@ export async function sendAllProposed(guildId) {
     bulkRunning = true;
     void (async () => {
         for (const id of ids) {
-            await sendWarning(id).catch((err) => logger.warn({ err, warn: id }, "Bulk warning send failed"));
+            await sendWarning(id, reviewedBy).catch((err) => logger.warn({ err, warn: id }, "Bulk warning send failed"));
             await new Promise((r) => setTimeout(r, 1500));
         }
     })().finally(() => {
@@ -211,13 +211,13 @@ export async function createManualWarning(guildId, input) {
     // Issued by a person: send now when the bot is here, otherwise it waits as a draft.
     if (!botClient())
         return { id: row.id, status: "proposed" };
-    return { id: row.id, ...(await sendWarning(row.id)) };
+    return { id: row.id, ...(await sendWarning(row.id, issuedBy)) };
 }
-export async function dismissWarning(id, guildId) {
+export async function dismissWarning(id, guildId, reviewedBy) {
     const w = await prisma.warn.findUnique({ where: { id } });
     if (!w || w.guildId !== guildId)
         throw new WarningError("Warning not found.");
-    await prisma.warn.update({ where: { id }, data: { status: "dismissed" } });
+    await prisma.warn.update({ where: { id }, data: { status: "dismissed", reviewedBy } });
 }
 // --------------------------------------------------------------- reporting
 export async function listWarnings(guildId) {
@@ -254,6 +254,7 @@ export async function listWarnings(guildId) {
                 reason: r.reason,
                 days: r.days ? r.days.split(",") : [],
                 issuedBy: r.issuedBy ?? (r.modId === "system" ? "Attendance system" : r.modId),
+                reviewedBy: r.reviewedBy,
                 createdAt: r.createdAt,
                 sentAt: r.sentAt,
                 ackDueAt: r.ackDueAt,
