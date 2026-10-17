@@ -115,7 +115,8 @@ export function MembersPage({
 
       {data && !data.workday ? (
         <div className="rounded-2xl border border-line bg-panel px-5 py-3 text-sm text-muted">
-          {dayLabel(data.day, { weekday: "long", day: "numeric", month: "long" })} is not a working day — nobody is held to the rules.
+          {dayLabel(data.day, { weekday: "long", day: "numeric", month: "long" })}{" "}
+          {data.holiday ? `is a public holiday (${data.holiday})` : "is not a working day"} — nobody is held to the rules.
         </div>
       ) : null}
 

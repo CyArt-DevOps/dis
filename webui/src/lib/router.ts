@@ -22,7 +22,7 @@ export function usePath(): string {
 }
 
 export interface Route {
-  name: "overview" | "members" | "calendar" | "meetings" | "meeting" | "profile";
+  name: "overview" | "members" | "calendar" | "meetings" | "meeting" | "profile" | "warnings" | "holidays";
   userId?: string;
   meetingId?: number;
 }
@@ -35,5 +35,7 @@ export function parseRoute(path: string): Route {
   const mt = /^\/meetings\/(\d+)/.exec(path);
   if (mt) return { name: "meeting", meetingId: Number(mt[1]) };
   if (path.startsWith("/meetings")) return { name: "meetings" };
+  if (path.startsWith("/warnings")) return { name: "warnings" };
+  if (path.startsWith("/holidays")) return { name: "holidays" };
   return { name: "overview" };
 }

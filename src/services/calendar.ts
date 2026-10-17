@@ -1,6 +1,7 @@
 import { prisma } from "../core/db.js";
 import { org, activeProjects } from "../config/loader.js";
 import { shiftDayKey, splitByTzDay, tzDateKey, tzDayStartUtc } from "../lib/time.js";
+import { holidayMap } from "./holidays.js";
 
 /**
  * Calendar-shaped attendance: for every member in scope, a per-day status for a
@@ -14,6 +15,7 @@ export type DayStatus =
   | "missing" // working day with no voice presence
   | "leave" // covered by an approved leave request
   | "off" // weekend / non-working day
+  | "holiday" // public holiday (org-wide day off)
   | "untracked" // before tracking started, or before this member existed
   | "future"; // hasn't happened yet
 
@@ -122,7 +124,7 @@ export async function buildCalendars(
   const p = policy();
   const requiredSeconds = Math.round(p.minHours * 3600);
 
-  const [attendance, sessions, leaves, firstData] = await Promise.all([
+  const [attendance, sessions, leaves, firstData, holidays] = await Promise.all([
     prisma.attendance.findMany({
       where: { guildId, userId: { in: ids }, day: { gte: from, lte: to } },
       select: { userId: true, day: true, seconds: true },
@@ -155,6 +157,7 @@ export async function buildCalendars(
       where: { guildId, userId: { in: ids } },
       _min: { day: true },
     }),
+    holidayMap(guildId),
   ]);
 
   const key = (userId: string, day: string) => userId + "|" + day;
@@ -225,6 +228,7 @@ export async function buildCalendars(
       // Real presence always wins: if there is data for the day, show it even
       // if the day predates the computed tracked-from boundary.
       else if (day < trackedFrom && firstJoinAt === null && !onLeave.has(k)) status = "untracked";
+      else if (holidays.has(day)) status = "holiday";
       else if (onLeave.has(k)) status = "leave";
       else if (!workday.get(day)) status = "off";
       else if (firstJoinAt === null) status = "missing";
@@ -265,7 +269,7 @@ export interface CompactCalendar {
   project: string | null;
   module: number | null;
   pod: number | null;
-  /** One char per day, same order as the range: g/p/m/l/o/f. */
+  /** One char per day, same order as the range: g/p/m/l/o/h/u/f. */
   status: string;
   /** Sparse detail, keyed by day, only where there was presence. */
   detail: Record<string, { s: number; f: string | null; o: boolean }>;
@@ -279,6 +283,7 @@ const STATUS_CODE: Record<DayStatus, string> = {
   missing: "m",
   leave: "l",
   off: "o",
+  holiday: "h",
   untracked: "u",
   future: "f",
 };

@@ -96,6 +96,49 @@ model Warn {
   modId     String
   reason    String @db.Text
   createdAt DateTime @default(now())
+  // auto (attendance sweep) | manual (dashboard) | command (/warn)
+  source    String   @default("command") @db.VarChar(16)
+  // hours (short/absent days) | conduct | other
+  kind      String   @default("other") @db.VarChar(16)
+  // proposed (awaiting HR review) | sent | dm-failed | acknowledged | dismissed
+  status    String   @default("sent") @db.VarChar(16)
+  // CSV of YYYY-MM-DD days an hours warning covers, so a streak is warned once
+  days      String?  @db.Text
+  issuedBy  String?  @db.VarChar(80)
+  sentAt    DateTime?
+  ackDueAt  DateTime?
+  acknowledgedAt DateTime?
+  dmChannelId String? @db.VarChar(32)
+  dmMessageId String? @db.VarChar(32)
+
+  @@index([guildId, userId])
+  @@index([guildId, status])
+}
+
+/// Org-wide non-working days. They count like weekends everywhere.
+model Holiday {
+  id        Int      @id @default(autoincrement())
+  guildId   String
+  day       String   @db.VarChar(10) // YYYY-MM-DD
+  name      String   @db.VarChar(120)
+  addedBy   String?  @db.VarChar(80)
+  createdAt DateTime @default(now())
+
+  @@unique([guildId, day])
+}
+
+/// Members removed for non-compliance (three warnings). Audit trail.
+model Termination {
+  id        Int      @id @default(autoincrement())
+  guildId   String
+  userId    String
+  fullName  String?  @db.VarChar(191)
+  reason    String   @db.Text
+  warnIds   String?  @db.Text // CSV of the warnings that triggered it
+  by        String   @db.VarChar(80)
+  kicked    Boolean  @default(false)
+  error     String?  @db.Text
+  createdAt DateTime @default(now())
 
   @@index([guildId, userId])
 }

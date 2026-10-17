@@ -26,6 +26,11 @@ export const DAY_STATUS: Record<DayStatus, { label: string; dot: string; cell: s
     dot: "bg-orange-400",
     cell: "bg-orange-400/85 text-orange-950 hover:bg-orange-300",
   },
+  holiday: {
+    label: "Holiday",
+    dot: "bg-sky-400",
+    cell: "bg-sky-400/20 text-sky-200 ring-1 ring-inset ring-sky-400/30",
+  },
   off: {
     label: "Off day",
     dot: "bg-zinc-600",
@@ -77,7 +82,7 @@ export const VIOLATION_META: Record<ViolationKind, { label: string; tone: Tone }
 };
 
 export function Legend() {
-  const shown: DayStatus[] = ["good", "partial", "missing", "leave", "off", "untracked"];
+  const shown: DayStatus[] = ["good", "partial", "missing", "leave", "holiday", "off", "untracked"];
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-dim">
       {shown.map((s) => (

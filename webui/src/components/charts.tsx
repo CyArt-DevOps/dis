@@ -60,6 +60,7 @@ function Key({ color, label, value }: { color: string; label: string; value?: Re
 export interface TrendDay {
   day: string;
   workday: boolean;
+  holiday?: string | null;
   settled: boolean;
   good: number;
   partial: number;
@@ -101,7 +102,9 @@ export function ComplianceTrend({ days }: { days: TrendDay[] }) {
                 {!h.settled ? <span className="text-amber-300">in progress</span> : null}
               </>
             ) : (
-              <span>Non-working day · {h.active} joined anyway</span>
+              <span>
+                {h.holiday ? `Holiday: ${h.holiday}` : "Non-working day"} · {h.active} joined anyway
+              </span>
             )}
           </>
         ) : (
@@ -374,6 +377,7 @@ const STATUS_COLOR: Record<string, string> = {
   missing: C.bad,
   leave: C.leave,
   off: "rgba(255,255,255,0.18)",
+  holiday: "rgba(56,189,248,0.45)",
   untracked: "rgba(255,255,255,0.06)",
   future: "rgba(255,255,255,0.04)",
 };

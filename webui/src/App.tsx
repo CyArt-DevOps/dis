@@ -9,6 +9,8 @@ import { CalendarsPage } from "./pages/Calendars";
 import { ProfilePage } from "./pages/Profile";
 import { MeetingsPage } from "./pages/Meetings";
 import { MeetingDetailPage } from "./pages/MeetingDetail";
+import { WarningsPage } from "./pages/Warnings";
+import { HolidaysPage } from "./pages/Holidays";
 
 const ICON: Record<string, ReactNode> = {
   overview: <path d="M3 13h4v8H3zM10 8h4v13h-4zM17 3h4v18h-4z" />,
@@ -30,6 +32,18 @@ const ICON: Record<string, ReactNode> = {
       <path d="M15.5 10.5 21.5 7v10l-6-3.5" />
     </>
   ),
+  warnings: (
+    <>
+      <path d="M12 3 2.5 20h19L12 3z" />
+      <path d="M12 10v4.5M12 17.5h.01" />
+    </>
+  ),
+  holidays: (
+    <>
+      <rect x="3" y="4.5" width="18" height="16" rx="2.5" />
+      <path d="M3 9.5h18M8 2.5v4M16 2.5v4M12 12.5l1.2 2.4 2.6.4-1.9 1.8.5 2.6-2.4-1.3-2.4 1.3.5-2.6-1.9-1.8 2.6-.4z" />
+    </>
+  ),
 };
 
 const TABS = [
@@ -37,6 +51,8 @@ const TABS = [
   { path: "/members", name: "members", label: "Members" },
   { path: "/calendar", name: "calendar", label: "Calendars" },
   { path: "/meetings", name: "meetings", label: "Meetings" },
+  { path: "/warnings", name: "warnings", label: "Warnings" },
+  { path: "/holidays", name: "holidays", label: "Holidays" },
 ] as const;
 
 function Icon({ name }: { name: string }) {
@@ -198,6 +214,8 @@ export default function App() {
           ) : null}
           {route.name === "meetings" ? <MeetingsPage /> : null}
           {route.name === "meeting" && route.meetingId ? <MeetingDetailPage id={route.meetingId} /> : null}
+          {route.name === "warnings" ? <WarningsPage /> : null}
+          {route.name === "holidays" ? <HolidaysPage today={config.data?.today ?? new Date().toISOString().slice(0, 10)} /> : null}
         </main>
       </div>
     </div>

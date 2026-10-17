@@ -22,6 +22,21 @@ import {
 } from "../services/calendar.js";
 import { memberInsights, orgInsights } from "../services/insights.js";
 import { LeaveInputError, grantManualLeave, revokeManualLeave } from "../services/manualLeave.js";
+import { HolidayInputError, addHoliday, listHolidays, removeHoliday } from "../services/holidays.js";
+import {
+  WarningError,
+  createManualWarning,
+  dismissWarning,
+  listTerminations,
+  listWarnings,
+  runHoursSweep,
+  sendAllProposed,
+  sendWarning,
+  terminateMember,
+  terminationCandidates,
+} from "../services/warnings.js";
+import { clearCalendarCache } from "../services/calendar.js";
+import { clearInsightsCache } from "../services/insights.js";
 import { prisma } from "../core/db.js";
 import { shiftDayKey, tzDateKey, tzName } from "../lib/time.js";
 import { dashboardHtml } from "./page.js";
@@ -214,6 +229,98 @@ app.post("/api/profile/:id/leave/:leaveId/revoke", express.json({ limit: "1kb" }
     if (err instanceof LeaveInputError) res.status(400).json({ error: err.message });
     else throw err;
   }
+});
+
+/** Run an async write handler; known input errors become 400s. */
+function action(fn: (req: express.Request) => Promise<unknown>): express.RequestHandler {
+  return async (req, res) => {
+    try {
+      res.json((await fn(req)) ?? { ok: true });
+    } catch (err) {
+      if (err instanceof WarningError || err instanceof HolidayInputError) {
+        res.status(400).json({ error: err.message });
+      } else throw err;
+    }
+  };
+}
+const jsonBody = express.json({ limit: "8kb" });
+
+// ----- Public holidays
+app.get("/api/holidays", async (req, res) => {
+  res.json(await listHolidays(guildOf(req)));
+});
+app.post(
+  "/api/holidays",
+  jsonBody,
+  sameOrigin,
+  action(async (req) => {
+    const row = await addHoliday(guildOf(req), req.body ?? {});
+    clearCalendarCache();
+    clearInsightsCache();
+    logger.info({ day: row.day, name: row.name }, "Holiday added from dashboard");
+    return row;
+  })
+);
+app.post(
+  "/api/holidays/:id/delete",
+  jsonBody,
+  sameOrigin,
+  action(async (req) => {
+    await removeHoliday(guildOf(req), Number(req.params.id));
+    clearCalendarCache();
+    clearInsightsCache();
+  })
+);
+
+// ----- Warnings
+app.get("/api/warnings", async (req, res) => {
+  const [data, candidates, terminations] = await Promise.all([
+    listWarnings(guildOf(req)),
+    terminationCandidates(guildOf(req)),
+    listTerminations(guildOf(req)),
+  ]);
+  res.json({ ...data, candidates, terminations });
+});
+app.post("/api/warnings", jsonBody, sameOrigin, action((req) => createManualWarning(guildOf(req), req.body ?? {})));
+app.post("/api/warnings/:id/send", jsonBody, sameOrigin, action((req) => sendWarning(Number(req.params.id))));
+app.post(
+  "/api/warnings/:id/dismiss",
+  jsonBody,
+  sameOrigin,
+  action((req) => dismissWarning(Number(req.params.id), guildOf(req)))
+);
+app.post("/api/warnings/send-all", jsonBody, sameOrigin, action((req) => sendAllProposed(guildOf(req))));
+app.post("/api/warnings/run-check", jsonBody, sameOrigin, action((req) => runHoursSweep(guildOf(req))));
+app.post(
+  "/api/members/:id/terminate",
+  jsonBody,
+  sameOrigin,
+  action(async (req) => {
+    const by = String((req.body as { by?: unknown })?.by ?? "").trim();
+    if (by.length < 2) throw new WarningError("Enter your name to confirm the termination.");
+    if ((req.body as { confirm?: unknown })?.confirm !== "TERMINATE") {
+      throw new WarningError('Type TERMINATE to confirm.');
+    }
+    return terminateMember(guildOf(req), String(req.params.id), `dashboard:${by}`);
+  })
+);
+
+/** Member picker for the manual warning form. */
+app.get("/api/members/search", async (req, res) => {
+  const q = String(req.query.q ?? "").trim();
+  if (q.length < 2) {
+    res.json([]);
+    return;
+  }
+  const rows = await prisma.member.findMany({
+    where: {
+      guildId: guildOf(req),
+      OR: [{ fullName: { contains: q } }, { displayName: { contains: q } }, { tag: { contains: q } }, { id: q }],
+    },
+    select: { id: true, fullName: true, displayName: true, tag: true, project: true, batch: true },
+    take: 12,
+  });
+  res.json(rows.map((m) => ({ ...m, fullName: m.fullName ?? m.displayName ?? m.tag ?? m.id })));
 });
 
 /** One meeting with everyone expected: who joined, when, who was late. */

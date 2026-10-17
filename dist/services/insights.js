@@ -2,6 +2,7 @@ import { prisma, withDbRetry } from "../core/db.js";
 import { org } from "../config/loader.js";
 import { shiftDayKey, tzDateKey, tzDayStartUtc } from "../lib/time.js";
 import { buildCalendars } from "./calendar.js";
+import { holidayMap, isWorkingDay } from "./holidays.js";
 function policy() {
     return org.attendancePolicy;
 }
@@ -31,10 +32,6 @@ function hm(seconds) {
 function settledThrough() {
     const today = tzDateKey(new Date());
     return new Date() >= localTimeOn(today, policy().windowEnd) ? today : shiftDayKey(today, -1);
-}
-function isWorkday(day) {
-    const d = new Date(day + "T00:00:00Z").getUTCDay();
-    return policy().workdays.includes(d === 0 ? 7 : d);
 }
 function trackingStart() {
     return policy().trackingStartsOn ?? "2026-01-01";
@@ -120,17 +117,20 @@ async function computeOrgInsights(guildId, from, to) {
     const settled = settledThrough();
     const rangeStart = tzDayStartUtc(from);
     const rangeEnd = tzDayStartUtc(shiftDayKey(to, 1));
-    const [calendars, pendingLeaves, openTickets, warnings, meetings] = await Promise.all([
+    const [calendars, pendingLeaves, openTickets, warnings, meetings, holidays] = await Promise.all([
         buildCalendars(guildId, {}, from, to),
         prisma.leaveRequest.count({ where: { guildId, status: "pending" } }),
         prisma.ticket.count({ where: { guildId, status: { in: ["open", "claimed"] } } }),
-        prisma.warn.count({ where: { guildId, createdAt: { gte: rangeStart, lt: rangeEnd } } }),
+        prisma.warn.count({
+            where: { guildId, createdAt: { gte: rangeStart, lt: rangeEnd }, status: { notIn: ["proposed", "dismissed"] } },
+        }),
         prisma.meeting.findMany({
             where: { guildId, startAt: { gte: rangeStart, lt: rangeEnd }, status: { not: "cancelled" } },
             orderBy: { startAt: "desc" },
             take: 8,
             select: { id: true, title: true, startAt: true, status: true },
         }),
+        holidayMap(guildId),
     ]);
     const meetingCounts = await prisma.meetingAttendance.groupBy({
         by: ["meetingId", "status"],
@@ -161,7 +161,8 @@ async function computeOrgInsights(guildId, from, to) {
     for (const day of calendars[0]?.days.map((d) => d.day) ?? []) {
         trendBy.set(day, {
             day,
-            workday: isWorkday(day),
+            workday: isWorkingDay(day, holidays),
+            holiday: holidays.get(day) ?? null,
             settled: day <= settled,
             good: 0,
             partial: 0,
@@ -419,7 +420,11 @@ export async function memberInsights(guildId, userId, month, from, to) {
             orderBy: { scheduledStart: "desc" },
             select: { status: true, minutesLate: true, scheduledStart: true, meeting: { select: { title: true } } },
         }),
-        prisma.warn.findMany({ where: { guildId, userId }, orderBy: { createdAt: "desc" } }),
+        // Drafts awaiting HR review and dismissed warnings were never issued.
+        prisma.warn.findMany({
+            where: { guildId, userId, status: { notIn: ["proposed", "dismissed"] } },
+            orderBy: { createdAt: "desc" },
+        }),
         prisma.ticket.findMany({
             where: { guildId, openerId: userId },
             orderBy: { createdAt: "desc" },

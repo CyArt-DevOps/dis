@@ -1,4 +1,5 @@
 import { prisma } from "../core/db.js";
+import { holidayMap } from "./holidays.js";
 import { org } from "../config/loader.js";
 import { shiftDayKey, splitByTzDay, tzDateKey, tzDayStartUtc } from "../lib/time.js";
 
@@ -241,6 +242,8 @@ export interface ComplianceRow {
 export interface ComplianceReport {
   day: string;
   workday: boolean;
+  /** Holiday name when the day is a public holiday. */
+  holiday: string | null;
   policy: {
     windowStart: string;
     loginBy: string;
@@ -266,7 +269,8 @@ export async function complianceForDay(
   const loginCutoff = localTimeOn(day, policy.loginBy);
   const windowEnd = localTimeOn(day, policy.windowEnd);
   const requiredSeconds = Math.round(policy.minHours * 3600);
-  const workday = policy.workdays.includes(isoWeekday(day));
+  const holiday = (await holidayMap(guildId)).get(day) ?? null;
+  const workday = policy.workdays.includes(isoWeekday(day)) && !holiday;
   const now = new Date();
   const isToday = day === tzDateKey(now);
   // Days before tracking began have no data because nothing was recording, so
@@ -379,6 +383,7 @@ export async function complianceForDay(
   return {
     day,
     workday,
+    holiday,
     policy: {
       windowStart: policy.windowStart,
       loginBy: policy.loginBy,

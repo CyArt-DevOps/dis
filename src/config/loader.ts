@@ -83,6 +83,36 @@ const orgSchema = z.object({
         .optional(),
     })
     .default({}),
+  /**
+   * Attendance enforcement: formal warnings and the three-strike removal.
+   *
+   * "review" (default): the daily sweep only DRAFTS hours warnings; HR sends
+   * them from the dashboard, a missed 24h acknowledgement is shown but has no
+   * consequence, and members at the strike limit wait in a termination review
+   * list. "strict": drafts are DMed immediately and reaching the limit removes
+   * the member automatically. Flip only after the review output looks right.
+   */
+  enforcement: z
+    .object({
+      mode: z.enum(["review", "strict"]).default("review"),
+      // Short/absent working days in a row that earn an hours warning.
+      consecutiveShortDays: z.number().int().min(1).max(10).default(2),
+      ackHours: z.number().positive().default(24),
+      strikeLimit: z.number().int().min(1).default(3),
+      // No warning considers days before this (YYYY-MM-DD): rules apply from here on.
+      startsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    })
+    .default({}),
+  /** Post "you served Xh Ym today" in the member's channel when they leave VC. */
+  voiceSummary: z
+    .object({
+      enabled: z.boolean().default(true),
+      // Wait this long after a leave before posting, so quick reconnects don't spam.
+      delaySeconds: z.number().int().min(0).default(90),
+      // Remove the message after this many minutes (0 = keep).
+      deleteAfterMinutes: z.number().int().min(0).default(30),
+    })
+    .default({}),
 });
 
 export type OrgConfig = z.infer<typeof orgSchema>;

@@ -235,5 +235,17 @@
       5
     ],
     "trackingStartsOn": "2026-06-01"
+  },
+  "enforcement": {
+    "mode": "review",
+    "consecutiveShortDays": 2,
+    "ackHours": 24,
+    "strikeLimit": 3,
+    "startsOn": "2026-10-19"
+  },
+  "voiceSummary": {
+    "enabled": true,
+    "delaySeconds": 90,
+    "deleteAfterMinutes": 30
   }
 }

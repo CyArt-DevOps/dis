@@ -1,4 +1,7 @@
 import { Events } from "discord.js";
+import { setBotClient } from "./core/botClient.js";
+import { startWarningSweep, stopWarningSweep, warningAckHandler } from "./services/warnings.js";
+import { voiceSummaryDismissHandler } from "./services/voiceSummary.js";
 import { env } from "./config/env.js";
 import { createClient } from "./core/client.js";
 import { logger } from "./core/logger.js";
@@ -80,6 +83,8 @@ async function main() {
   registry.registerHandler(projectWizardHandler);
   registry.registerHandler(meetingPeopleSelectHandler);
   registry.registerHandler(scheduleModalHandler);
+  registry.registerHandler(warningAckHandler);
+  registry.registerHandler(voiceSummaryDismissHandler);
 
   await closeStaleSessionsOnBoot();
 
@@ -99,7 +104,9 @@ async function main() {
   });
 
   client.once(Events.ClientReady, () => {
+    setBotClient(client);
     void reopenActiveSessions(client).then(() => startAttendanceSweep(client));
+    startWarningSweep(client);
     void restoreGrants();
     startScheduler(client);
     startMonthlySummary(client);
@@ -113,6 +120,7 @@ async function main() {
     stopScheduler();
     stopMonthlySummary();
     stopTicketArchiveSweep();
+    stopWarningSweep();
     stopScheduledMessages();
     stopAttendanceSweep();
     stopDashboard();

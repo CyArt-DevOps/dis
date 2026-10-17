@@ -34,7 +34,9 @@ export function MonthCalendar({ days }: { days: CalendarDay[] }) {
           const detail =
             d.status === "leave"
               ? "approved leave"
-              : d.status === "off"
+              : d.status === "holiday"
+                ? "public holiday"
+                : d.status === "off"
                 ? "non-working day"
                 : d.status === "future"
                   ? "upcoming"

@@ -6,6 +6,7 @@ export type DayStatus =
   | "missing"
   | "leave"
   | "off"
+  | "holiday"
   | "untracked"
   | "future";
 
@@ -49,6 +50,7 @@ const CODE_STATUS: Record<string, DayStatus> = {
   m: "missing",
   l: "leave",
   o: "off",
+  h: "holiday",
   u: "untracked",
   f: "future",
 };
@@ -111,6 +113,7 @@ export interface ComplianceRow {
 export interface ComplianceReport {
   day: string;
   workday: boolean;
+  holiday?: string | null;
   policy: { windowStart: string; loginBy: string; windowEnd: string; minHours: number };
   rows: ComplianceRow[];
 }
@@ -295,6 +298,7 @@ export interface OrgInsights {
   trend: {
     day: string;
     workday: boolean;
+    holiday?: string | null;
     settled: boolean;
     good: number;
     partial: number;
@@ -399,6 +403,55 @@ export interface MeetingDetail {
     actualJoinAt: string | null;
     minutesLate: number;
     leaveStatus: string | null;
+  }[];
+}
+
+export interface Holiday {
+  id: number;
+  day: string;
+  name: string;
+  addedBy: string | null;
+  createdAt: string;
+}
+
+export interface WarningRow {
+  id: number;
+  userId: string;
+  fullName: string;
+  project: string | null;
+  batch: string | null;
+  source: "auto" | "manual" | "command" | string;
+  kind: string;
+  status: "proposed" | "sent" | "dm-failed" | "acknowledged" | "dismissed" | string;
+  reason: string;
+  days: string[];
+  issuedBy: string;
+  createdAt: string;
+  sentAt: string | null;
+  ackDueAt: string | null;
+  acknowledgedAt: string | null;
+  overdue: boolean;
+  strikes: number;
+}
+
+export interface WarningsData {
+  mode: "review" | "strict";
+  strikeLimit: number;
+  ackHours: number;
+  consecutiveShortDays: number;
+  startsOn: string | null;
+  botConnected: boolean;
+  warnings: WarningRow[];
+  candidates: { userId: string; fullName: string; project: string | null; batch: string | null; strikes: number }[];
+  terminations: {
+    id: number;
+    userId: string;
+    fullName: string | null;
+    reason: string;
+    by: string;
+    kicked: boolean;
+    error: string | null;
+    createdAt: string;
   }[];
 }
 

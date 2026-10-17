@@ -1,6 +1,7 @@
 import { prisma } from "../core/db.js";
 import { org, activeProjects } from "../config/loader.js";
 import { shiftDayKey, splitByTzDay, tzDateKey, tzDayStartUtc } from "../lib/time.js";
+import { holidayMap } from "./holidays.js";
 function policy() {
     return org.attendancePolicy;
 }
@@ -71,7 +72,7 @@ export async function buildCalendars(guildId, scope, from, to) {
     const today = tzDateKey(new Date());
     const p = policy();
     const requiredSeconds = Math.round(p.minHours * 3600);
-    const [attendance, sessions, leaves, firstData] = await Promise.all([
+    const [attendance, sessions, leaves, firstData, holidays] = await Promise.all([
         prisma.attendance.findMany({
             where: { guildId, userId: { in: ids }, day: { gte: from, lte: to } },
             select: { userId: true, day: true, seconds: true },
@@ -104,6 +105,7 @@ export async function buildCalendars(guildId, scope, from, to) {
             where: { guildId, userId: { in: ids } },
             _min: { day: true },
         }),
+        holidayMap(guildId),
     ]);
     const key = (userId, day) => userId + "|" + day;
     const secondsBy = new Map();
@@ -174,6 +176,8 @@ export async function buildCalendars(guildId, scope, from, to) {
             // if the day predates the computed tracked-from boundary.
             else if (day < trackedFrom && firstJoinAt === null && !onLeave.has(k))
                 status = "untracked";
+            else if (holidays.has(day))
+                status = "holiday";
             else if (onLeave.has(k))
                 status = "leave";
             else if (!workday.get(day))
@@ -213,6 +217,7 @@ const STATUS_CODE = {
     missing: "m",
     leave: "l",
     off: "o",
+    holiday: "h",
     untracked: "u",
     future: "f",
 };
