@@ -20,6 +20,7 @@ import {
   memberProfile,
   type MemberScope,
 } from "../services/calendar.js";
+import { memberInsights, orgInsights } from "../services/insights.js";
 import { prisma } from "../core/db.js";
 import { shiftDayKey, tzDateKey, tzName } from "../lib/time.js";
 import { dashboardHtml } from "./page.js";
@@ -159,7 +160,17 @@ app.get("/api/calendar", async (req, res) => {
 /** Full profile for one member: calendar, meetings, leave history. */
 app.get("/api/profile/:id", async (req, res) => {
   const { from, to } = calendarRange(req);
-  res.json(await memberProfile(guildOf(req), req.params.id, from, to));
+  const profile = await memberProfile(guildOf(req), req.params.id, from, to);
+  const insights = profile.member
+    ? await memberInsights(guildOf(req), req.params.id, profile.calendar, from, to)
+    : null;
+  res.json({ ...profile, insights });
+});
+
+/** Org analytics for the Overview: compliance, violations, projects, people. */
+app.get("/api/insights", async (req, res) => {
+  const range = rangeOf(req);
+  res.json(await orgInsights(range.guildId, range.from, range.to));
 });
 
 /** Rule compliance for one local day (`?day=YYYY-MM-DD`, default today). */

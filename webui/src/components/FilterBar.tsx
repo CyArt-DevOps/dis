@@ -1,49 +1,11 @@
-import { Button, ListBox, ListBoxItem, SearchField, Select } from "@heroui/react";
 import type { FilterOptions, Scope } from "../api";
+import { Button, Select } from "./ui";
 
-const ALL = "__all__";
-
-function Picker({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: { key: string; label: string }[];
-  onChange: (key: string | undefined) => void;
-}) {
-  return (
-    <Select
-      aria-label={label}
-      className="min-w-[9.5rem]"
-      selectedKey={value || ALL}
-      onSelectionChange={(key) => onChange(key === ALL ? undefined : String(key))}
-    >
-      <Select.Trigger>
-        <Select.Value />
-        <Select.Indicator />
-      </Select.Trigger>
-      <Select.Popover>
-        <ListBox>
-          <ListBoxItem id={ALL} textValue={`All ${label.toLowerCase()}`}>
-            All {label.toLowerCase()}
-          </ListBoxItem>
-          {options.map((o) => (
-            <ListBoxItem key={o.key} id={o.key} textValue={o.label}>
-              {o.label}
-            </ListBoxItem>
-          ))}
-        </ListBox>
-      </Select.Popover>
-    </Select>
-  );
-}
+const ALL = "";
 
 /**
- * Batch / project / module / pod filters plus the global name search. Scope is
- * owned by the page so every view stays in sync when the user switches tabs.
+ * Batch / project / module / pod filters plus the name search. Scope is owned
+ * by App so every view stays in sync when the user switches tabs.
  */
 export function FilterBar({
   options,
@@ -60,46 +22,49 @@ export function FilterBar({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <SearchField
-        aria-label="Search members"
-        className="w-full sm:w-72"
-        value={scope.q ?? ""}
-        onChange={(v) => set({ q: v || undefined })}
-      >
-        <SearchField.Group>
-          <SearchField.SearchIcon />
-          <SearchField.Input placeholder="Search members by name…" />
-          <SearchField.ClearButton />
-        </SearchField.Group>
-      </SearchField>
-
-      <Picker
-        label="Batches"
+      <div className="relative w-full sm:w-72">
+        <svg className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+        </svg>
+        <input
+          aria-label="Search members"
+          value={scope.q ?? ""}
+          onChange={(e) => set({ q: e.target.value || undefined })}
+          placeholder="Search members by name…"
+          className="h-9 w-full rounded-full border border-line-strong bg-panel pr-3 pl-10 text-sm text-fg outline-none placeholder:text-dim focus-visible:ring-2 focus-visible:ring-white/30"
+        />
+      </div>
+      <Select
+        label="Batch"
+        className="min-w-[9rem]"
         value={scope.batch ?? ALL}
-        options={(options?.batches ?? []).map((b) => ({ key: b, label: b }))}
-        onChange={(v) => set({ batch: v })}
+        onChange={(v) => set({ batch: v || undefined })}
+        options={[{ value: ALL, label: "All batches" }, ...(options?.batches ?? []).map((b) => ({ value: b, label: b }))]}
       />
-      <Picker
-        label="Projects"
+      <Select
+        label="Project"
+        className="min-w-[10rem]"
         value={scope.project ?? ALL}
-        options={(options?.projects ?? []).map((p) => ({ key: p, label: p }))}
-        onChange={(v) => set({ project: v })}
+        onChange={(v) => set({ project: v || undefined })}
+        options={[{ value: ALL, label: "All projects" }, ...(options?.projects ?? []).map((p) => ({ value: p, label: p }))]}
       />
-      <Picker
-        label="Modules"
+      <Select
+        label="Module"
+        className="min-w-[8.5rem]"
         value={scope.module === undefined ? ALL : String(scope.module)}
-        options={(options?.modules ?? []).map((m) => ({ key: String(m), label: `Module ${m}` }))}
-        onChange={(v) => set({ module: v === undefined ? undefined : Number(v) })}
+        onChange={(v) => set({ module: v ? Number(v) : undefined })}
+        options={[{ value: ALL, label: "All modules" }, ...(options?.modules ?? []).map((m) => ({ value: String(m), label: `Module ${m}` }))]}
       />
-      <Picker
-        label="Pods"
+      <Select
+        label="Pod"
+        className="min-w-[7.5rem]"
         value={scope.pod === undefined ? ALL : String(scope.pod)}
-        options={(options?.pods ?? []).map((p) => ({ key: String(p), label: `Pod ${p}` }))}
-        onChange={(v) => set({ pod: v === undefined ? undefined : Number(v) })}
+        onChange={(v) => set({ pod: v ? Number(v) : undefined })}
+        options={[{ value: ALL, label: "All pods" }, ...(options?.pods ?? []).map((p) => ({ value: String(p), label: `Pod ${p}` }))]}
       />
-
       {active ? (
-        <Button size="sm" variant="ghost" onPress={() => onChange({})}>
+        <Button size="sm" variant="ghost" onClick={() => onChange({})}>
           Clear
         </Button>
       ) : null}

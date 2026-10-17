@@ -14,14 +14,14 @@ function columnOf(day: string): number {
  * Fridays — is visible at a glance.
  */
 export function MonthCalendar({ days }: { days: CalendarDay[] }) {
-  if (days.length === 0) return <p className="text-sm text-muted-foreground">No days in range.</p>;
+  if (days.length === 0) return <p className="text-sm text-dim">No days in range.</p>;
   const lead = columnOf(days[0]!.day);
 
   return (
     <div>
       <div className="grid grid-cols-7 gap-1.5">
         {WEEKDAYS.map((w) => (
-          <div key={w} className="pb-1 text-center text-xs font-medium text-muted-foreground">
+          <div key={w} className="pb-1 text-center text-xs font-medium text-dim">
             {w}
           </div>
         ))}

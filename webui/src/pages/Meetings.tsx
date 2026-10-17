@@ -1,64 +1,103 @@
-import { Card, Chip, Table } from "@heroui/react";
 import { get, type MeetingRow } from "../api";
 import { useAsync } from "../lib/useAsync";
+import { Badge, Card, Empty, ErrorNote, Meter, PageHeader, Skeleton, Stat, StatStrip, rateTone, type Tone } from "../components/ui";
 
-const COLUMNS = [
-  { id: "id", label: "#" },
-  { id: "title", label: "Title" },
-  { id: "start", label: "Start" },
-  { id: "duration", label: "Duration" },
-  { id: "status", label: "Status" },
-  { id: "counts", label: "Present / Late / Absent / Excused" },
-];
+const STATUS_TONE: Record<string, Tone> = {
+  completed: "neutral",
+  monitoring: "good",
+  scheduled: "info",
+  cancelled: "bad",
+};
 
 export function MeetingsPage() {
   const { data, error, loading } = useAsync(() => get<MeetingRow[]>("/api/meetings"), []);
-  if (error) return <p className="text-sm text-rose-400">Error: {error}</p>;
+  const rows = (data ?? []).map((m) => {
+    const present = m.counts.present ?? 0;
+    const late = m.counts.late ?? 0;
+    const absent = m.counts.absent ?? 0;
+    const excused = m.counts.excused ?? 0;
+    const expected = present + late + absent;
+    return { ...m, present, late, absent, excused, expected, pct: expected ? Math.round(((present + late) / expected) * 1000) / 10 : 0 };
+  });
+  const held = rows.filter((r) => r.expected > 0);
+  const sum = held.reduce((a, r) => ({ p: a.p + r.present + r.late, e: a.e + r.expected, l: a.l + r.late, ab: a.ab + r.absent }), { p: 0, e: 0, l: 0, ab: 0 });
+  const avg = sum.e ? Math.round((sum.p / sum.e) * 1000) / 10 : 0;
+  const upcoming = rows.filter((r) => r.status === "scheduled").length;
 
   return (
-    <Card className="overflow-hidden p-0">
-      <Table aria-label="Meetings">
-        <Table.ScrollContainer className="max-h-[75vh]">
-          <Table.Content>
-            <Table.Header columns={COLUMNS}>
-              {(c) => <Table.Column isRowHeader={c.id === "title"}>{c.label}</Table.Column>}
-            </Table.Header>
-            <Table.Body
-              items={data ?? []}
-              renderEmptyState={() => (
-                <div className="p-6 text-sm text-muted-foreground">
-                  {loading ? "Loading…" : "No meetings yet."}
-                </div>
-              )}
-            >
-              {(m) => (
-                <Table.Row id={m.id}>
-                  <Table.Cell className="tabular-nums text-muted-foreground">{m.id}</Table.Cell>
-                  <Table.Cell className="font-medium">{m.title}</Table.Cell>
-                  <Table.Cell className="tabular-nums">
-                    {new Date(m.startAt).toLocaleString()}
-                  </Table.Cell>
-                  <Table.Cell className="tabular-nums">{m.durationMin}m</Table.Cell>
-                  <Table.Cell>
-                    <Chip size="sm" variant="soft">
-                      {m.status}
-                    </Chip>
-                  </Table.Cell>
-                  <Table.Cell className="tabular-nums">
-                    <span className="text-emerald-400">{m.counts.present ?? 0}</span>
-                    {" / "}
-                    <span className="text-amber-400">{m.counts.late ?? 0}</span>
-                    {" / "}
-                    <span className="text-rose-400">{m.counts.absent ?? 0}</span>
-                    {" / "}
-                    <span className="text-muted-foreground">{m.counts.excused ?? 0}</span>
-                  </Table.Cell>
-                </Table.Row>
-              )}
-            </Table.Body>
-          </Table.Content>
-        </Table.ScrollContainer>
-      </Table>
-    </Card>
+    <div className="space-y-6">
+      <PageHeader title="Meetings" description="Last 50 meetings with attendance. Attendance = present + late over everyone expected." />
+      {error ? <ErrorNote message={error} /> : null}
+
+      <StatStrip cols={4}>
+        <Stat label="Avg attendance" value={`${avg}%`} tone={held.length ? rateTone(avg) : undefined} hint={`${held.length} meetings with records`} />
+        <Stat label="No-shows" value={sum.ab.toLocaleString()} tone={sum.ab ? "bad" : undefined} hint="absent without leave" />
+        <Stat label="Late arrivals" value={sum.l.toLocaleString()} tone={sum.l ? "warn" : undefined} />
+        <Stat label="Upcoming" value={upcoming} tone="info" hint="scheduled" />
+      </StatStrip>
+
+      <Card className="overflow-hidden">
+        <div className="scroll-thin max-h-[72vh] overflow-auto">
+          {loading && !data ? (
+            <div className="space-y-2 p-5">
+              {Array.from({ length: 8 }, (_, k) => (
+                <Skeleton key={k} className="h-10" />
+              ))}
+            </div>
+          ) : rows.length === 0 ? (
+            <Empty>No meetings yet.</Empty>
+          ) : (
+            <table className="w-full min-w-[820px] text-sm">
+              <thead className="sticky top-0 z-10 bg-panel">
+                <tr className="border-b border-line text-left text-[11px] tracking-[0.06em] text-dim uppercase">
+                  <th className="px-5 py-2.5 font-medium">Meeting</th>
+                  <th className="px-3 py-2.5 font-medium">When</th>
+                  <th className="px-3 py-2.5 font-medium">Status</th>
+                  <th className="w-[24%] px-3 py-2.5 font-medium">Attendance</th>
+                  <th className="px-3 py-2.5 text-right font-medium">On time</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Late</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Absent</th>
+                  <th className="px-5 py-2.5 text-right font-medium">Excused</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((m) => (
+                  <tr key={m.id} className="border-b border-line/60 last:border-0 hover:bg-white/[0.02]">
+                    <td className="px-5 py-3">
+                      <div className="font-medium">{m.title}</div>
+                      <div className="text-xs text-dim">
+                        #{m.id} · {m.durationMin} min
+                      </div>
+                    </td>
+                    <td className="px-3 tabular-nums text-muted">
+                      {new Date(m.startAt).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </td>
+                    <td className="px-3">
+                      <Badge tone={STATUS_TONE[m.status] ?? "neutral"}>{m.status}</Badge>
+                    </td>
+                    <td className="px-3">
+                      {m.expected ? (
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex-1">
+                            <Meter value={m.pct} tone={rateTone(m.pct)} />
+                          </div>
+                          <span className="w-12 text-right text-xs tabular-nums">{m.pct}%</span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-dim">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 text-right tabular-nums text-emerald-300">{m.present}</td>
+                    <td className="px-3 text-right tabular-nums text-amber-300">{m.late}</td>
+                    <td className="px-3 text-right tabular-nums text-rose-300">{m.absent}</td>
+                    <td className="px-5 text-right tabular-nums text-dim">{m.excused}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </Card>
+    </div>
   );
 }

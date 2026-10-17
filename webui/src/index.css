@@ -1,5 +1,30 @@
 @import "tailwindcss";
-@import "@heroui/styles";
+
+/*
+ * BagUI-style tokens (shadcn/ui lineage): near-black canvas, hairline white
+ * borders, white pill primaries, grey-to-white gradient headings. Status
+ * colours stay semantic (emerald / amber / rose) because the data depends on
+ * them reading instantly.
+ */
+@theme {
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-bg: #050505;
+  --color-panel: #0b0b0c;
+  --color-panel-2: #121214;
+  --color-panel-3: #18181b;
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-line-strong: rgb(255 255 255 / 0.14);
+  --color-fg: #fafafa;
+  --color-muted: #a1a1aa;
+  --color-dim: #71717a;
+  --color-good: #34d399;
+  --color-warn: #fbbf24;
+  --color-bad: #fb7185;
+  --color-leave: #fb923c;
+  --color-info: #a5b4fc;
+}
 
 html,
 body,
@@ -8,5 +33,59 @@ body,
 }
 
 body {
-  @apply bg-surface text-foreground antialiased;
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: rgb(255 255 255 / 0.18);
+}
+
+/* Grey-to-white heading treatment, as on bagui.pro. */
+.text-gradient {
+  background: linear-gradient(180deg, #fafafa 0%, #a1a1aa 120%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.text-gradient-x {
+  background: linear-gradient(90deg, #71717a 0%, #fafafa 60%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Faint engineering grid behind the page header. */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse at top, black 30%, transparent 75%);
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.15) transparent;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, rgb(255 255 255 / 0.03) 25%, rgb(255 255 255 / 0.07) 50%, rgb(255 255 255 / 0.03) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+select {
+  color-scheme: dark;
 }

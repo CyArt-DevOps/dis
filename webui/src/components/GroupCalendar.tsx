@@ -9,7 +9,7 @@ import { DAY_STATUS } from "./status";
  */
 export function GroupCalendar({ members }: { members: MemberCalendar[] }) {
   if (members.length === 0) {
-    return <p className="p-6 text-sm text-muted-foreground">No members match these filters.</p>;
+    return <p className="p-6 text-sm text-dim">No members match these filters.</p>;
   }
   const days = members[0]!.days;
 
@@ -18,18 +18,18 @@ export function GroupCalendar({ members }: { members: MemberCalendar[] }) {
       <table className="w-full border-separate border-spacing-0 text-sm">
         <thead>
           <tr>
-            <th className="sticky left-0 z-10 bg-surface px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <th className="sticky left-0 z-10 bg-panel px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-dim">
               Member
             </th>
             {days.map((d) => (
               <th
                 key={d.day}
-                className="px-0.5 py-2 text-center text-[10px] font-normal text-muted-foreground"
+                className="px-0.5 py-2 text-center text-[10px] font-normal text-dim"
               >
                 {Number(d.day.slice(-2))}
               </th>
             ))}
-            <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wide text-dim">
               G/P/M
             </th>
           </tr>
@@ -37,11 +37,11 @@ export function GroupCalendar({ members }: { members: MemberCalendar[] }) {
         <tbody>
           {members.map((m) => (
             <tr key={m.userId} className="group">
-              <td className="sticky left-0 z-10 max-w-[15rem] truncate bg-surface py-1 pr-3 pl-3 group-hover:bg-content2">
+              <td className="sticky left-0 z-10 max-w-[15rem] truncate bg-panel py-1 pr-3 pl-3 group-hover:bg-panel-3">
                 <button
                   type="button"
                   onClick={() => navigate(`/member/${encodeURIComponent(m.userId)}`)}
-                  className="truncate text-left font-medium text-foreground hover:text-indigo-400 hover:underline"
+                  className="truncate text-left font-medium text-fg hover:text-white hover:underline"
                   title={`${m.fullName} — open profile`}
                 >
                   {m.fullName}
@@ -59,12 +59,12 @@ export function GroupCalendar({ members }: { members: MemberCalendar[] }) {
                   />
                 </td>
               ))}
-              <td className="whitespace-nowrap py-1 pr-3 pl-3 text-right text-xs tabular-nums text-muted-foreground">
-                <span className="text-emerald-400">{m.totals.good}</span>
+              <td className="whitespace-nowrap py-1 pr-3 pl-3 text-right text-xs tabular-nums text-dim">
+                <span className="text-emerald-300">{m.totals.good}</span>
                 {" / "}
-                <span className="text-amber-400">{m.totals.partial}</span>
+                <span className="text-amber-300">{m.totals.partial}</span>
                 {" / "}
-                <span className="text-rose-400">{m.totals.missing}</span>
+                <span className="text-rose-300">{m.totals.missing}</span>
               </td>
             </tr>
           ))}

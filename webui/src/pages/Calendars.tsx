@@ -1,18 +1,10 @@
-import { Button, Card } from "@heroui/react";
 import { useMemo } from "react";
-import {
-  expandCalendar,
-  get,
-  monthLabel,
-  scopeQuery,
-  shiftMonth,
-  type CompactCalendar,
-  type Scope,
-} from "../api";
+import { expandCalendar, get, monthLabel, scopeQuery, shiftMonth, type CompactCalendar, type FilterOptions, type Scope } from "../api";
 import { useAsync } from "../lib/useAsync";
 import { GroupCalendar } from "../components/GroupCalendar";
+import { FilterBar } from "../components/FilterBar";
 import { Legend } from "../components/status";
-import { StatCard, StatGrid } from "../components/StatCard";
+import { Button, Card, ErrorNote, PageHeader, Skeleton, Stat, StatStrip, rateTone } from "../components/ui";
 
 /**
  * The group calendar view. It is the same component for batch / project /
@@ -21,11 +13,15 @@ import { StatCard, StatGrid } from "../components/StatCard";
  */
 export function CalendarsPage({
   scope,
+  onScope,
+  filters,
   month,
   onMonth,
   minMonth,
 }: {
   scope: Scope;
+  onScope: (s: Scope) => void;
+  filters: FilterOptions | null;
   month: string;
   onMonth: (m: string) => void;
   minMonth: string | null;
@@ -40,10 +36,7 @@ export function CalendarsPage({
     [month, query]
   );
 
-  const members = useMemo(
-    () => (data ? data.members.map((c) => expandCalendar(c, data.days)) : []),
-    [data]
-  );
+  const members = useMemo(() => (data ? data.members.map((c) => expandCalendar(c, data.days)) : []), [data]);
   const totals = members.reduce(
     (a, m) => ({
       good: a.good + m.totals.good,
@@ -53,56 +46,55 @@ export function CalendarsPage({
     }),
     { good: 0, partial: 0, missing: 0, leave: 0 }
   );
+  const settled = totals.good + totals.partial + totals.missing;
+  const rate = settled ? Math.round((totals.good / settled) * 1000) / 10 : 0;
 
   const scopeLabel =
-    [
-      scope.batch,
-      scope.project,
-      scope.module !== undefined ? `Module ${scope.module}` : null,
-      scope.pod !== undefined ? `Pod ${scope.pod}` : null,
-    ]
+    [scope.batch, scope.project, scope.module !== undefined ? `Module ${scope.module}` : null, scope.pod !== undefined ? `Pod ${scope.pod}` : null]
       .filter(Boolean)
       .join(" · ") || "Whole organization";
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold">{scopeLabel}</h2>
-          <p className="text-xs text-muted-foreground">
-            {members.length} member(s) · {monthLabel(month)}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            isDisabled={atStart}
-            onPress={() => onMonth(shiftMonth(month, -1))}
-          >
-            ← Prev
-          </Button>
-          <span className="min-w-[9rem] text-center text-sm font-medium">{monthLabel(month)}</span>
-          <Button size="sm" variant="ghost" onPress={() => onMonth(shiftMonth(month, 1))}>
-            Next →
-          </Button>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Calendars"
+        description={`${scopeLabel} · ${members.length} member${members.length === 1 ? "" : "s"} · ${monthLabel(month)}`}
+        action={
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" disabled={atStart} onClick={() => onMonth(shiftMonth(month, -1))}>
+              ←
+            </Button>
+            <span className="min-w-[9.5rem] text-center text-sm font-medium">{monthLabel(month)}</span>
+            <Button size="sm" onClick={() => onMonth(shiftMonth(month, 1))}>
+              →
+            </Button>
+          </div>
+        }
+      />
 
-      <StatGrid>
-        <StatCard label="Completed days" value={totals.good} accent="success" />
-        <StatCard label="Partial days" value={totals.partial} accent="warning" />
-        <StatCard label="Missing days" value={totals.missing} accent="danger" />
-        <StatCard label="Leave days" value={totals.leave} />
-      </StatGrid>
+      <FilterBar options={filters} scope={scope} onChange={onScope} />
+
+      <StatStrip cols={5}>
+        <Stat label="Compliance" value={`${rate}%`} tone={settled ? rateTone(rate) : undefined} hint={`${settled.toLocaleString()} member-days`} />
+        <Stat label="Completed" value={totals.good.toLocaleString()} tone="good" />
+        <Stat label="Partial" value={totals.partial.toLocaleString()} tone="warn" hint="late and/or short" />
+        <Stat label="Absent" value={totals.missing.toLocaleString()} tone="bad" />
+        <Stat label="Leave" value={totals.leave.toLocaleString()} tone="leave" />
+      </StatStrip>
 
       <Legend />
 
-      <Card className="overflow-hidden p-0">
+      <Card className="overflow-hidden">
         {error ? (
-          <p className="p-6 text-sm text-rose-400">Error: {error}</p>
+          <div className="p-5">
+            <ErrorNote message={error} />
+          </div>
         ) : loading && members.length === 0 ? (
-          <p className="p-6 text-sm text-muted-foreground">Loading…</p>
+          <div className="space-y-2 p-5">
+            {Array.from({ length: 10 }, (_, k) => (
+              <Skeleton key={k} className="h-6" />
+            ))}
+          </div>
         ) : (
           <GroupCalendar members={members} />
         )}

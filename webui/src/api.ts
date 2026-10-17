@@ -178,6 +178,178 @@ export interface Profile {
     scheduledStart: string;
   }[];
   leaves: { type: string; status: string; startAt: string; endAt: string; reason: string }[];
+  insights: MemberInsights | null;
+}
+
+export type ViolationKind =
+  | "absent"
+  | "late-login"
+  | "short-hours"
+  | "meeting-absent"
+  | "meeting-late"
+  | "warning";
+
+export interface Violation {
+  kind: ViolationKind;
+  severity: "high" | "medium" | "low";
+  day: string;
+  detail: string;
+  minutesLate?: number;
+  servedSeconds?: number;
+  requiredSeconds?: number;
+}
+
+export interface MemberInsights {
+  details: {
+    userId: string;
+    registrationDate: string | null;
+    flagged: boolean;
+    updatedAt: string | null;
+    trackedFrom: string | null;
+  };
+  period: {
+    from: string;
+    to: string;
+    complianceRate: number;
+    workdays: number;
+    voiceSeconds: number;
+    avgSecondsPerPresentDay: number;
+    onTimeRate: number;
+    avgFirstJoin: string | null;
+    late: number;
+    short: number;
+    absent: number;
+  };
+  lifetime: {
+    from: string;
+    good: number;
+    partial: number;
+    missing: number;
+    leave: number;
+    complianceRate: number;
+    voiceSeconds: number;
+    presentDays: number;
+    currentStreak: number;
+    bestStreak: number;
+    absentStreak: number;
+  };
+  violations: Violation[];
+  lifetimeViolations: {
+    absent: number;
+    late: number;
+    short: number;
+    meetingAbsent: number;
+    meetingLate: number;
+    warnings: number;
+  };
+  meetingStats: {
+    present: number;
+    late: number;
+    absent: number;
+    excused: number;
+    pct: number;
+    avgMinutesLate: number;
+  };
+  warns: { reason: string; by: string; at: string }[];
+  tickets: {
+    id: number;
+    type: string;
+    subject: string;
+    status: string;
+    createdAt: string;
+    closedAt: string | null;
+  }[];
+  daily: { day: string; seconds: number; firstJoin: string | null; status: string }[];
+  projectRank: { rank: number; of: number } | null;
+}
+
+export interface OrgInsights {
+  range: { from: string; to: string; settledThrough: string };
+  policy: { loginBy: string; minHours: number; windowStart: string; windowEnd: string };
+  members: number;
+  activeMembers: number;
+  inactiveMembers: number;
+  unassignedMembers: number;
+  totals: {
+    good: number;
+    partial: number;
+    missing: number;
+    leave: number;
+    late: number;
+    short: number;
+    lateAndShort: number;
+    voiceSeconds: number;
+  };
+  complianceRate: number;
+  avgLateMinutes: number;
+  trend: {
+    day: string;
+    workday: boolean;
+    settled: boolean;
+    good: number;
+    partial: number;
+    missing: number;
+    leave: number;
+    active: number;
+    seconds: number;
+    rate: number;
+  }[];
+  arrivals: { label: string; count: number; late: boolean }[];
+  projects: {
+    project: string;
+    members: number;
+    active: number;
+    good: number;
+    partial: number;
+    missing: number;
+    leave: number;
+    rate: number;
+    voiceSeconds: number;
+    avgSecondsPerPresentDay: number;
+  }[];
+  topViolators: {
+    userId: string;
+    fullName: string;
+    project: string | null;
+    batch: string | null;
+    absent: number;
+    late: number;
+    short: number;
+    avgLateMinutes: number;
+    rate: number;
+    score: number;
+  }[];
+  topPerformers: {
+    userId: string;
+    fullName: string;
+    project: string | null;
+    good: number;
+    rate: number;
+    voiceSeconds: number;
+  }[];
+  latestWorkday: {
+    day: string;
+    good: number;
+    late: number;
+    short: number;
+    lateAndShort: number;
+    absent: number;
+    leave: number;
+  } | null;
+  pendingLeaves: number;
+  openTickets: number;
+  warnings: number;
+  meetings: {
+    id: number;
+    title: string;
+    startAt: string;
+    status: string;
+    present: number;
+    late: number;
+    absent: number;
+    excused: number;
+    pct: number;
+  }[];
 }
 
 export interface MeetingRow {
@@ -221,6 +393,18 @@ export function hm(seconds: number): string {
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   return `${h}h ${String(m).padStart(2, "0")}m`;
+}
+
+export function dayLabel(
+  day: string,
+  opts: Intl.DateTimeFormatOptions = { weekday: "short", day: "numeric", month: "short" }
+): string {
+  return new Date(day + "T00:00:00Z").toLocaleDateString(undefined, { ...opts, timeZone: "UTC" });
+}
+
+export function dateOf(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
 export function timeOf(iso: string | null): string {
