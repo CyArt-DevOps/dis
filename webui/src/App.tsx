@@ -50,9 +50,7 @@ function Icon({ name }: { name: string }) {
 function Logo() {
   return (
     <button type="button" onClick={() => navigate("/")} className="flex items-center gap-2.5 text-left">
-      <span className="grid size-8 place-items-center rounded-lg border border-line-strong bg-white text-[13px] font-bold text-black">
-        Cy
-      </span>
+      <img src="/logo.png" alt="CyArt" width={32} height={32} className="size-8 shrink-0 drop-shadow-[0_4px_12px_rgba(255,107,44,0.18)]" />
       <span className="leading-tight">
         <span className="block text-sm font-semibold tracking-tight">CyArt\Ops</span>
         <span className="block text-[11px] text-dim">Intern attendance</span>
