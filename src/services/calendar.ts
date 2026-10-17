@@ -318,6 +318,11 @@ export function compactCalendar(c: MemberCalendar): CompactCalendar {
 const CACHE_TTL_MS = 45_000;
 const calendarCache = new Map<string, { at: number; value: CompactCalendar[] }>();
 
+/** Drop cached calendars after a write (e.g. leave granted from the dashboard). */
+export function clearCalendarCache(): void {
+  calendarCache.clear();
+}
+
 export async function cachedCompactCalendars(
   guildId: string,
   scope: MemberScope,
@@ -415,11 +420,15 @@ export interface MemberProfile {
     scheduledStart: Date;
   }[];
   leaves: {
+    id: number;
     type: string;
     status: string;
     startAt: Date;
     endAt: Date;
     reason: string;
+    approvedDays: string | null;
+    reviewedById: string | null;
+    reviewedAt: Date | null;
   }[];
 }
 
@@ -455,7 +464,17 @@ export async function memberProfile(
       where: { guildId, userId },
       orderBy: { startAt: "desc" },
       take: 25,
-      select: { type: true, status: true, startAt: true, endAt: true, reason: true },
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        startAt: true,
+        endAt: true,
+        reason: true,
+        approvedDays: true,
+        reviewedById: true,
+        reviewedAt: true,
+      },
     }),
   ]);
 

@@ -111,6 +111,10 @@ export async function orgInsights(guildId, from, to) {
     return run;
 }
 const inflight = new Map();
+/** Drop cached org analytics after a write. */
+export function clearInsightsCache() {
+    orgCache.clear();
+}
 async function computeOrgInsights(guildId, from, to) {
     const p = policy();
     const settled = settledThrough();

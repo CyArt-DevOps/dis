@@ -49,8 +49,8 @@ export function MonthCalendar({ days }: { days: CalendarDay[] }) {
             >
               <span>{num}</span>
               {d.seconds > 0 ? (
-                <span className="text-[10px] font-normal opacity-80">
-                  {Math.floor(d.seconds / 3600)}h
+                <span className="text-[10px] font-normal tabular-nums opacity-80">
+                  {Math.floor(d.seconds / 3600)}h {String(Math.floor((d.seconds % 3600) / 60)).padStart(2, "0")}m
                 </span>
               ) : null}
             </div>

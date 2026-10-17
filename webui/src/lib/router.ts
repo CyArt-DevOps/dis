@@ -22,8 +22,9 @@ export function usePath(): string {
 }
 
 export interface Route {
-  name: "overview" | "members" | "calendar" | "meetings" | "profile";
+  name: "overview" | "members" | "calendar" | "meetings" | "meeting" | "profile";
   userId?: string;
+  meetingId?: number;
 }
 
 export function parseRoute(path: string): Route {
@@ -31,6 +32,8 @@ export function parseRoute(path: string): Route {
   if (m) return { name: "profile", userId: decodeURIComponent(m[1]!) };
   if (path.startsWith("/calendar")) return { name: "calendar" };
   if (path.startsWith("/members")) return { name: "members" };
+  const mt = /^\/meetings\/(\d+)/.exec(path);
+  if (mt) return { name: "meeting", meetingId: Number(mt[1]) };
   if (path.startsWith("/meetings")) return { name: "meetings" };
   return { name: "overview" };
 }

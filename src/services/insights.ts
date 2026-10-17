@@ -244,6 +244,11 @@ export async function orgInsights(guildId: string, from: string, to: string): Pr
 
 const inflight = new Map<string, Promise<OrgInsights>>();
 
+/** Drop cached org analytics after a write. */
+export function clearInsightsCache(): void {
+  orgCache.clear();
+}
+
 async function computeOrgInsights(guildId: string, from: string, to: string): Promise<OrgInsights> {
   const p = policy();
   const settled = settledThrough();

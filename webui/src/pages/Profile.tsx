@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   ago,
   dateOf,
@@ -6,6 +6,7 @@ import {
   get,
   hm,
   monthLabel,
+  post,
   shiftMonth,
   type FilterOptions,
   type Profile,
@@ -16,6 +17,7 @@ import { navigate } from "../lib/router";
 import { MonthCalendar } from "../components/MonthCalendar";
 import { Legend, VIOLATION_META } from "../components/status";
 import { DailyHours, JoinTimeline } from "../components/charts";
+import { LeaveDialog } from "../components/LeaveDialog";
 import {
   Avatar,
   Badge,
@@ -48,19 +50,56 @@ export function ProfilePage({
   onMonth,
   minMonth,
   policy,
+  today,
 }: {
   userId: string;
   month: string;
   onMonth: (m: string) => void;
   minMonth: string | null;
   policy: FilterOptions["policy"] | null;
+  today: string;
 }) {
   const atStart = Boolean(minMonth && month <= minMonth);
-  const { data, error, loading } = useAsync(
+  const { data, error, loading, reload } = useAsync(
     () => get<Profile>(`/api/profile/${encodeURIComponent(userId)}?month=${month}`),
     [userId, month]
   );
   const [filter, setFilter] = useState<Filter>("all");
+  const [granting, setGranting] = useState(false);
+  const [toast, setToast] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
+
+  // Every day already covered by an approved leave, so the picker can flag them.
+  const coveredDays = useMemo(() => {
+    const out = new Set<string>();
+    for (const l of data?.leaves ?? []) {
+      if (l.status !== "approved") continue;
+      if (l.approvedDays) {
+        for (const d of l.approvedDays.split(",")) if (d) out.add(d);
+        continue;
+      }
+      const end = new Date(l.endAt);
+      for (let t = new Date(l.startAt); t <= end; t = new Date(t.getTime() + 86400_000)) {
+        out.add(t.toISOString().slice(0, 10));
+      }
+    }
+    return out;
+  }, [data]);
+
+  const flash = (tone: "good" | "bad", text: string) => {
+    setToast({ tone, text });
+    window.setTimeout(() => setToast(null), 6000);
+  };
+
+  const revoke = async (leaveId: number) => {
+    if (!window.confirm("Revoke this leave? Those days count against attendance again.")) return;
+    try {
+      await post(`/api/profile/${encodeURIComponent(userId)}/leave/${leaveId}/revoke`, {});
+      flash("good", `Leave #${leaveId} revoked`);
+      reload();
+    } catch (e) {
+      flash("bad", (e as Error).message);
+    }
+  };
 
   if (error) return <ErrorNote message={error} />;
   if (loading && !data) return <ProfileSkeleton />;
@@ -94,6 +133,9 @@ export function ProfilePage({
           ← Back
         </Button>
         <div className="flex items-center gap-1.5">
+          <Button size="sm" variant="primary" className="mr-2" onClick={() => setGranting(true)}>
+            + Grant leave
+          </Button>
           <Button size="sm" disabled={atStart} onClick={() => onMonth(shiftMonth(month, -1))}>
             ←
           </Button>
@@ -267,7 +309,7 @@ export function ProfilePage({
                 </div>
                 <div className="text-right text-xs text-dim">
                   <div>
-                    <b className="font-medium text-fg tabular-nums">{Math.round(ins.lifetime.voiceSeconds / 3600)}h</b> voice
+                    <b className="font-medium text-fg tabular-nums">{hm(ins.lifetime.voiceSeconds)}</b> voice
                   </div>
                   <div>
                     <b className="font-medium text-fg tabular-nums">{ins.lifetime.presentDays}</b> days present
@@ -335,16 +377,44 @@ export function ProfilePage({
             />
           ))}
         </ListCard>
-        <ListCard title="Leave history" count={data.leaves.length} empty="No leave requests.">
-          {data.leaves.map((l, k) => (
-            <Row
-              key={k}
-              title={`${l.type} leave`}
-              sub={`${dateOf(l.startAt)} → ${dateOf(l.endAt)}`}
-              note={l.reason}
-              right={<Badge tone={l.status === "approved" ? "good" : l.status === "rejected" ? "bad" : "warn"}>{l.status}</Badge>}
-            />
-          ))}
+        <ListCard
+          title="Leave history"
+          count={data.leaves.length}
+          empty="No leave requests."
+          action={
+            <button type="button" onClick={() => setGranting(true)} className="text-xs text-muted hover:text-fg">
+              + Grant
+            </button>
+          }
+        >
+          {data.leaves.map((l) => {
+            const viaDashboard = l.reviewedById?.startsWith("dashboard:");
+            const days = l.approvedDays ? l.approvedDays.split(",").filter(Boolean) : null;
+            return (
+              <Row
+                key={l.id}
+                title={`#${l.id} · ${l.type} leave`}
+                sub={
+                  days
+                    ? days.length <= 4
+                      ? days.map((d) => dayLabel(d, { day: "numeric", month: "short" })).join(", ")
+                      : `${days.length} days · ${dayLabel(days[0]!, { day: "numeric", month: "short" })} → ${dayLabel(days[days.length - 1]!, { day: "numeric", month: "short" })}`
+                    : `${dateOf(l.startAt)} → ${dateOf(l.endAt)}`
+                }
+                note={`${l.reason}${viaDashboard ? ` — approved on dashboard by ${l.reviewedById!.slice("dashboard:".length)}` : ""}`}
+                right={
+                  <div className="flex flex-col items-end gap-1">
+                    <Badge tone={l.status === "approved" ? "good" : l.status === "pending" ? "warn" : "bad"}>{l.status}</Badge>
+                    {viaDashboard && l.status === "approved" ? (
+                      <button type="button" onClick={() => revoke(l.id)} className="text-[11px] text-dim hover:text-rose-300">
+                        revoke
+                      </button>
+                    ) : null}
+                  </div>
+                }
+              />
+            );
+          })}
         </ListCard>
         <ListCard title="Warnings" count={ins?.warns.length ?? 0} empty="No warnings on record.">
           {(ins?.warns ?? []).map((w, k) => (
@@ -362,6 +432,35 @@ export function ProfilePage({
           ))}
         </ListCard>
       </div>
+
+      {granting ? (
+        <LeaveDialog
+          userId={userId}
+          name={m.fullName}
+          startMonth={month}
+          today={today}
+          workdays={policy?.workdays ?? [1, 2, 3, 4, 5]}
+          coveredDays={coveredDays}
+          onClose={() => setGranting(false)}
+          onGranted={(msg) => {
+            setGranting(false);
+            flash("good", msg);
+            reload();
+          }}
+        />
+      ) : null}
+
+      {toast ? (
+        <div
+          role="status"
+          className={cx(
+            "fixed right-4 bottom-4 z-50 max-w-sm rounded-xl border px-4 py-3 text-sm shadow-2xl backdrop-blur",
+            toast.tone === "good" ? "border-emerald-400/30 bg-emerald-950/80 text-emerald-200" : "border-rose-400/30 bg-rose-950/80 text-rose-200"
+          )}
+        >
+          {toast.text}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -432,10 +531,30 @@ function Counter({ label, value, tone }: { label: string; value: number; tone: "
   );
 }
 
-function ListCard({ title, count, empty, children }: { title: string; count: number; empty: string; children: ReactNode }) {
+function ListCard({
+  title,
+  count,
+  empty,
+  action,
+  children,
+}: {
+  title: string;
+  count: number;
+  empty: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <Card className="min-w-0">
-      <CardHeader title={title} action={<Badge>{count}</Badge>} />
+      <CardHeader
+        title={title}
+        action={
+          <div className="flex items-center gap-3">
+            {action}
+            <Badge>{count}</Badge>
+          </div>
+        }
+      />
       <div className="scroll-thin mt-3 max-h-72 overflow-y-auto border-t border-line">
         {count === 0 ? <Empty>{empty}</Empty> : <ul className="divide-y divide-line/60">{children}</ul>}
       </div>

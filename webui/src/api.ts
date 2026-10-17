@@ -177,7 +177,17 @@ export interface Profile {
     minutesLate: number;
     scheduledStart: string;
   }[];
-  leaves: { type: string; status: string; startAt: string; endAt: string; reason: string }[];
+  leaves: {
+    id: number;
+    type: string;
+    status: string;
+    startAt: string;
+    endAt: string;
+    reason: string;
+    approvedDays: string | null;
+    reviewedById: string | null;
+    reviewedAt: string | null;
+  }[];
   insights: MemberInsights | null;
 }
 
@@ -361,6 +371,37 @@ export interface MeetingRow {
   counts: Record<string, number>;
 }
 
+export interface MeetingDetail {
+  meeting: {
+    id: number;
+    title: string;
+    description: string | null;
+    startAt: string;
+    durationMin: number;
+    status: string;
+    audienceType: string;
+    audienceBatch: string | null;
+    audienceProject: string | null;
+    audienceModule: number | null;
+    audiencePod: number | null;
+    mandatory: boolean;
+    attendanceWindowMin: number;
+    organizerName: string;
+  };
+  attendees: {
+    userId: string;
+    fullName: string | null;
+    batch: string | null;
+    project: string | null;
+    module: number | null;
+    pod: number | null;
+    status: string;
+    actualJoinAt: string | null;
+    minutesLate: number;
+    leaveStatus: string | null;
+  }[];
+}
+
 export interface Scope {
   batch?: string;
   project?: string;
@@ -386,6 +427,17 @@ export async function get<T>(path: string): Promise<T> {
     throw new Error(body.error ?? `Request failed (${res.status})`);
   }
   return (await res.json()) as T;
+}
+
+export async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  return data as T;
 }
 
 export function hm(seconds: number): string {

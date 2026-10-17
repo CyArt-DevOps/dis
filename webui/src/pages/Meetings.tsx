@@ -1,5 +1,6 @@
 import { get, type MeetingRow } from "../api";
 import { useAsync } from "../lib/useAsync";
+import { navigate } from "../lib/router";
 import { Badge, Card, Empty, ErrorNote, Meter, PageHeader, Skeleton, Stat, StatStrip, rateTone, type Tone } from "../components/ui";
 
 const STATUS_TONE: Record<string, Tone> = {
@@ -26,7 +27,7 @@ export function MeetingsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Meetings" description="Last 50 meetings with attendance. Attendance = present + late over everyone expected." />
+      <PageHeader title="Meetings" description="Last 50 meetings. Click one to see who joined, when, and who was late. Attendance = present + late over everyone expected." />
       {error ? <ErrorNote message={error} /> : null}
 
       <StatStrip cols={4}>
@@ -62,7 +63,11 @@ export function MeetingsPage() {
               </thead>
               <tbody>
                 {rows.map((m) => (
-                  <tr key={m.id} className="border-b border-line/60 last:border-0 hover:bg-white/[0.02]">
+                  <tr
+                    key={m.id}
+                    onClick={() => navigate(`/meetings/${m.id}`)}
+                    className="cursor-pointer border-b border-line/60 transition-colors last:border-0 hover:bg-white/[0.03]"
+                  >
                     <td className="px-5 py-3">
                       <div className="font-medium">{m.title}</div>
                       <div className="text-xs text-dim">

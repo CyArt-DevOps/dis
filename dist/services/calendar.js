@@ -249,6 +249,10 @@ export function compactCalendar(c) {
  */
 const CACHE_TTL_MS = 45_000;
 const calendarCache = new Map();
+/** Drop cached calendars after a write (e.g. leave granted from the dashboard). */
+export function clearCalendarCache() {
+    calendarCache.clear();
+}
 export async function cachedCompactCalendars(guildId, scope, from, to) {
     const key = JSON.stringify([guildId, scope, from, to]);
     const hit = calendarCache.get(key);
@@ -332,7 +336,17 @@ export async function memberProfile(guildId, userId, from, to) {
             where: { guildId, userId },
             orderBy: { startAt: "desc" },
             take: 25,
-            select: { type: true, status: true, startAt: true, endAt: true, reason: true },
+            select: {
+                id: true,
+                type: true,
+                status: true,
+                startAt: true,
+                endAt: true,
+                reason: true,
+                approvedDays: true,
+                reviewedById: true,
+                reviewedAt: true,
+            },
         }),
     ]);
     return {

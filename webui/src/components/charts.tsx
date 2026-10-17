@@ -28,7 +28,12 @@ function weekday(day: string): string {
 }
 
 function hours(seconds: number): string {
-  return `${(seconds / 3600).toFixed(seconds >= 36000 ? 0 : 1)}h`;
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  // Big totals (org-wide voice) read better without minutes.
+  if (h >= 100) return `${h.toLocaleString()}h`;
+  return `${h}h ${String(m).padStart(2, "0")}m`;
 }
 
 /** Hover readout pinned above the chart. */
@@ -396,7 +401,11 @@ export function DailyHours({
               {weekday(h.day)} {shortDay(h.day)}
             </b>
             <span>
-              served <b className="font-medium text-fg tabular-nums">{hours(h.seconds)}</b> / {requiredHours}h
+              served <b className="font-medium text-fg tabular-nums">{hours(h.seconds)}</b> of{" "}
+              {hours(requiredHours * 3600)}
+              {h.seconds > 0 && h.seconds < requiredHours * 3600 ? (
+                <span className="text-amber-300"> · {hours(requiredHours * 3600 - h.seconds)} short</span>
+              ) : null}
             </span>
             <span>
               first join{" "}

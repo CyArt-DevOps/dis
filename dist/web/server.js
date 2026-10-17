@@ -6,6 +6,7 @@ import { computeAttendance, computeByMember } from "../services/attendanceStats.
 import { complianceForDay, defaultRange, liveVoice, pendingByUser, voiceByDay, voiceByMember, voiceOverview, } from "../services/voiceStats.js";
 import { cachedCompactCalendars, eachDay, filterOptions, memberProfile, } from "../services/calendar.js";
 import { memberInsights, orgInsights } from "../services/insights.js";
+import { LeaveInputError, grantManualLeave, revokeManualLeave } from "../services/manualLeave.js";
 import { prisma } from "../core/db.js";
 import { shiftDayKey, tzDateKey, tzName } from "../lib/time.js";
 import { dashboardHtml } from "./page.js";
@@ -134,6 +135,98 @@ app.get("/api/profile/:id", async (req, res) => {
         ? await memberInsights(guildOf(req), req.params.id, profile.calendar, from, to)
         : null;
     res.json({ ...profile, insights });
+});
+/**
+ * Writes are few and staff-only. Beyond the session cookie (SameSite=Lax, so
+ * no cross-site POSTs carry it), require JSON and a same-origin Origin header:
+ * a form on another site can send neither.
+ */
+const sameOrigin = (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+        try {
+            if (new URL(origin).host !== req.headers.host) {
+                res.status(403).json({ error: "cross-origin request refused" });
+                return;
+            }
+        }
+        catch {
+            res.status(403).json({ error: "bad origin" });
+            return;
+        }
+    }
+    if (!req.is("application/json")) {
+        res.status(415).json({ error: "JSON body required" });
+        return;
+    }
+    next();
+};
+/** HR grants approved leave for specific days from the profile page. */
+app.post("/api/profile/:id/leave", express.json({ limit: "8kb" }), sameOrigin, async (req, res) => {
+    try {
+        const out = await grantManualLeave(guildOf(req), String(req.params.id), req.body ?? {});
+        logger.info({ userId: req.params.id, leave: out.id, days: out.days }, "Leave granted from dashboard");
+        res.json(out);
+    }
+    catch (err) {
+        if (err instanceof LeaveInputError)
+            res.status(400).json({ error: err.message });
+        else
+            throw err;
+    }
+});
+app.post("/api/profile/:id/leave/:leaveId/revoke", express.json({ limit: "1kb" }), sameOrigin, async (req, res) => {
+    try {
+        await revokeManualLeave(guildOf(req), String(req.params.id), Number(req.params.leaveId));
+        logger.info({ userId: req.params.id, leave: req.params.leaveId }, "Dashboard leave revoked");
+        res.json({ ok: true });
+    }
+    catch (err) {
+        if (err instanceof LeaveInputError)
+            res.status(400).json({ error: err.message });
+        else
+            throw err;
+    }
+});
+/** One meeting with everyone expected: who joined, when, who was late. */
+app.get("/api/meetings/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const meeting = Number.isInteger(id)
+        ? await prisma.meeting.findFirst({ where: { id, guildId: guildOf(req) } })
+        : null;
+    if (!meeting) {
+        res.status(404).json({ error: "Meeting not found" });
+        return;
+    }
+    const [rows, organizer] = await Promise.all([
+        prisma.meetingAttendance.findMany({
+            where: { meetingId: id },
+            orderBy: [{ actualJoinAt: "asc" }],
+            select: {
+                userId: true,
+                fullName: true,
+                batch: true,
+                project: true,
+                module: true,
+                pod: true,
+                status: true,
+                actualJoinAt: true,
+                minutesLate: true,
+                leaveStatus: true,
+            },
+        }),
+        prisma.member.findUnique({
+            where: { id: meeting.organizerId },
+            select: { fullName: true, displayName: true, tag: true },
+        }),
+    ]);
+    res.json({
+        meeting: {
+            ...meeting,
+            organizerName: organizer?.fullName ?? organizer?.displayName ?? organizer?.tag ?? meeting.organizerId,
+        },
+        attendees: rows,
+    });
 });
 /** Org analytics for the Overview: compliance, violations, projects, people. */
 app.get("/api/insights", async (req, res) => {

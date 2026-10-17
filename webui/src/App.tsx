@@ -8,6 +8,7 @@ import { MembersPage } from "./pages/Members";
 import { CalendarsPage } from "./pages/Calendars";
 import { ProfilePage } from "./pages/Profile";
 import { MeetingsPage } from "./pages/Meetings";
+import { MeetingDetailPage } from "./pages/MeetingDetail";
 
 const ICON: Record<string, ReactNode> = {
   overview: <path d="M3 13h4v8H3zM10 8h4v13h-4zM17 3h4v18h-4z" />,
@@ -97,7 +98,9 @@ export default function App() {
   // Don't let the month pager walk back past the day tracking began.
   const minMonth = filters.data?.policy.trackingStartsOn?.slice(0, 7) ?? null;
   const isActive = (name: string) =>
-    route.name === name || (name === "members" && route.name === "profile");
+    route.name === name ||
+    (name === "members" && route.name === "profile") ||
+    (name === "meetings" && route.name === "meeting");
 
   return (
     <div className="min-h-full lg:flex">
@@ -192,9 +195,11 @@ export default function App() {
               onMonth={setMonth}
               minMonth={minMonth}
               policy={filters.data?.policy ?? null}
+              today={config.data?.today ?? new Date().toISOString().slice(0, 10)}
             />
           ) : null}
           {route.name === "meetings" ? <MeetingsPage /> : null}
+          {route.name === "meeting" && route.meetingId ? <MeetingDetailPage id={route.meetingId} /> : null}
         </main>
       </div>
     </div>

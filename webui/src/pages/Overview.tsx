@@ -244,7 +244,11 @@ export function OverviewPage({ days, onDays }: { days: string; onDays: (d: strin
         />
         <div className="mt-3 grid gap-px overflow-hidden border-t border-line bg-line sm:grid-cols-2 xl:grid-cols-4">
           {(i?.meetings ?? []).slice(0, 8).map((m) => (
-            <div key={m.id} className="bg-panel p-5">
+            <div
+              key={m.id}
+              onClick={() => navigate(`/meetings/${m.id}`)}
+              className="cursor-pointer bg-panel p-5 transition-colors hover:bg-panel-2"
+            >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{m.title}</div>
