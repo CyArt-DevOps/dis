@@ -17,6 +17,7 @@ import { MonthCalendar } from "../components/MonthCalendar";
 import { Legend, VIOLATION_META } from "../components/status";
 import { DailyHours, JoinTimeline } from "../components/charts";
 import { LeaveDialog } from "../components/LeaveDialog";
+import { ProfileWarnings } from "../components/ProfileWarnings";
 import { useHrPost } from "../lib/hr";
 import {
   Avatar,
@@ -338,6 +339,8 @@ export function ProfilePage({
         ) : null}
       </div>
 
+      <ProfileWarnings userId={userId} name={m.fullName} />
+
       {/* Activity */}
       <div className="grid gap-4 xl:grid-cols-5">
         <Card className="min-w-0 xl:col-span-3">
@@ -362,7 +365,7 @@ export function ProfilePage({
       </div>
 
       {/* Records */}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <ListCard title="Meetings" count={data.meetings.length} empty="No meeting records.">
           {data.meetings.slice(0, 30).map((mt) => (
             <Row
@@ -416,11 +419,6 @@ export function ProfilePage({
               />
             );
           })}
-        </ListCard>
-        <ListCard title="Warnings" count={ins?.warns.length ?? 0} empty="No warnings on record.">
-          {(ins?.warns ?? []).map((w, k) => (
-            <Row key={k} title={w.reason} sub={`by ${w.by} · ${dateOf(w.at)}`} right={<Badge tone="bad">warn</Badge>} />
-          ))}
         </ListCard>
         <ListCard title="Tickets opened" count={ins?.tickets.length ?? 0} empty="No tickets opened.">
           {(ins?.tickets ?? []).map((t) => (

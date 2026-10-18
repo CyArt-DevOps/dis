@@ -29,6 +29,7 @@ const STATUS: Record<string, { label: string; tone: Tone }> = {
   "dm-failed": { label: "DM failed", tone: "bad" },
   acknowledged: { label: "Acknowledged", tone: "good" },
   dismissed: { label: "Dismissed", tone: "neutral" },
+  revoked: { label: "Revoked", tone: "neutral" },
 };
 
 function StatusBadge({ w }: { w: WarningRow }) {
@@ -180,10 +181,14 @@ export function WarningsPage() {
             const r = await hp<{ status: string }>(`/api/warnings/${x.id}/send`, {}, `Send warning to ${x.fullName}`);
             return r.status === "sent" ? `Warning DMed to ${x.fullName}` : `Still couldn't DM ${x.fullName}`;
           })}
-          onDismiss={(x) => run(`dismiss-${x.id}`, async () => {
-            await hp(`/api/warnings/${x.id}/dismiss`, {}, `Dismiss warning #${x.id}`);
-            return `Warning #${x.id} dismissed (no longer counts)`;
-          })}
+          onDismiss={(x) => {
+            const reason = window.prompt(`Revoke warning #${x.id} for ${x.fullName}? Give a reason (the member is told by DM):`);
+            if (!reason) return;
+            void run(`dismiss-${x.id}`, async () => {
+              const r = await hp<{ notified: boolean }>(`/api/warnings/${x.id}/revoke`, { reason }, `Revoke warning #${x.id}`);
+              return `Warning #${x.id} revoked${r.notified ? "; member notified" : ""}. It no longer counts.`;
+            });
+          }}
         />
       ) : tab === "termination" && data ? (
         <TerminationTab data={data} onDone={(t) => { flash(t.tone, t.text); reload(); }} />
@@ -347,6 +352,7 @@ function AllTab({
             { value: "acknowledged", label: "Acknowledged" },
             { value: "dm-failed", label: "DM failed" },
             { value: "dismissed", label: "Dismissed" },
+            { value: "revoked", label: "Revoked" },
             { value: "auto", label: "Automatic" },
             { value: "manual", label: "Manual" },
           ]}
@@ -405,14 +411,14 @@ function AllTab({
                         retry DM
                       </button>
                     ) : null}
-                    {x.status !== "dismissed" ? (
+                    {x.status !== "dismissed" && x.status !== "revoked" ? (
                       <button
                         type="button"
                         disabled={busy !== null}
-                        onClick={() => window.confirm(`Dismiss warning #${x.id}? It will no longer count as a strike.`) && onDismiss(x)}
+                        onClick={() => onDismiss(x)}
                         className="text-xs text-dim hover:text-rose-300"
                       >
-                        dismiss
+                        revoke
                       </button>
                     ) : null}
                   </td>

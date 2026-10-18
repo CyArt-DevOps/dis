@@ -8,9 +8,9 @@ import { cachedCompactCalendars, eachDay, filterOptions, memberProfile, } from "
 import { memberInsights, orgInsights } from "../services/insights.js";
 import { LeaveInputError, grantManualLeave, revokeManualLeave } from "../services/manualLeave.js";
 import { HolidayInputError, addHoliday, listHolidays, removeHoliday } from "../services/holidays.js";
-import { WarningError, createManualWarning, dismissWarning, listTerminations, listWarnings, runHoursSweep, sendAllProposed, sendWarning, terminateMember, terminationCandidates, } from "../services/warnings.js";
+import { WarningError, createManualWarning, addWarningNote, dismissWarning, memberWarnings, revokeWarning, listTerminations, listWarnings, runHoursSweep, sendAllProposed, sendWarning, terminateMember, terminationCandidates, } from "../services/warnings.js";
 import { clearCalendarCache } from "../services/calendar.js";
-import { HrAuthError, activeHrNames, hrName, requireHr, verifyHr } from "../services/hrUsers.js";
+import { HrAuthError, activeHrNames, changeOwnPassword, hrName, requireHr, verifyHr } from "../services/hrUsers.js";
 import { clearInsightsCache } from "../services/insights.js";
 import { prisma } from "../core/db.js";
 import { shiftDayKey, tzDateKey, tzName } from "../lib/time.js";
@@ -222,6 +222,12 @@ app.post("/api/hr/verify", jsonBody, sameOrigin, action(async (req) => {
     const ip = String(req.headers["cf-connecting-ip"] ?? req.ip ?? "unknown");
     return verifyHr(String(b.name ?? ""), String(b.password ?? ""), ip);
 }));
+/** An HR member changes their own password (needs the current one). */
+app.post("/api/hr/password", jsonBody, sameOrigin, action(async (req) => {
+    const b = (req.body ?? {});
+    const ip = String(req.headers["cf-connecting-ip"] ?? req.ip ?? "unknown");
+    await changeOwnPassword(String(b.name ?? ""), String(b.current ?? ""), String(b.next ?? ""), ip);
+}));
 // ----- Public holidays
 app.get("/api/holidays", async (req, res) => {
     res.json(await listHolidays(guildOf(req)));
@@ -250,6 +256,12 @@ app.get("/api/warnings", async (req, res) => {
 app.post("/api/warnings", jsonBody, sameOrigin, requireHr, action((req) => createManualWarning(guildOf(req), { ...(req.body ?? {}), issuedBy: hrName(req) })));
 app.post("/api/warnings/:id/send", jsonBody, sameOrigin, requireHr, action((req) => sendWarning(Number(req.params.id), hrName(req))));
 app.post("/api/warnings/:id/dismiss", jsonBody, sameOrigin, requireHr, action((req) => dismissWarning(Number(req.params.id), guildOf(req), hrName(req))));
+app.post("/api/warnings/:id/revoke", jsonBody, sameOrigin, requireHr, action((req) => revokeWarning(Number(req.params.id), guildOf(req), hrName(req), req.body?.reason)));
+app.post("/api/warnings/:id/notes", jsonBody, sameOrigin, requireHr, action((req) => addWarningNote(Number(req.params.id), guildOf(req), hrName(req), req.body ?? {})));
+/** Everything on record for one member: warnings, strikes, HR notes. */
+app.get("/api/profile/:id/warnings", async (req, res) => {
+    res.json(await memberWarnings(guildOf(req), req.params.id));
+});
 app.post("/api/warnings/send-all", jsonBody, sameOrigin, requireHr, action((req) => sendAllProposed(guildOf(req), hrName(req))));
 app.post("/api/warnings/run-check", jsonBody, sameOrigin, requireHr, action((req) => runHoursSweep(guildOf(req))));
 app.post("/api/members/:id/terminate", jsonBody, sameOrigin, requireHr, action(async (req) => {

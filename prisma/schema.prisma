@@ -254,7 +254,22 @@ model HrUser {
   id           Int       @id @default(autoincrement())
   name         String    @unique @db.VarChar(80)
   passwordHash String    @db.VarChar(255)
+  email        String?   @db.VarChar(191)
   active       Boolean   @default(true)
   createdAt    DateTime  @default(now())
   lastUsedAt   DateTime?
+}
+
+/// Extra details HR adds to a warning after it was issued (optionally DMed to the member).
+model WarnNote {
+  id        Int      @id @default(autoincrement())
+  warnId    Int
+  author    String   @db.VarChar(80)
+  body      String   @db.Text
+  // revoke | note
+  kind      String   @default("note") @db.VarChar(16)
+  notified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([warnId])
 }

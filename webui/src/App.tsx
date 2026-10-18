@@ -11,7 +11,7 @@ import { MeetingsPage } from "./pages/Meetings";
 import { MeetingDetailPage } from "./pages/MeetingDetail";
 import { WarningsPage } from "./pages/Warnings";
 import { HolidaysPage } from "./pages/Holidays";
-import { HrBadge, HrProvider } from "./lib/hr";
+import { HrBadge, HrPasswordLink, HrProvider } from "./lib/hr";
 
 const ICON: Record<string, ReactNode> = {
   overview: <path d="M3 13h4v8H3zM10 8h4v13h-4zM17 3h4v18h-4z" />,
@@ -142,6 +142,7 @@ export default function App() {
         </nav>
         <div className="mt-auto space-y-3">
           <HrBadge />
+          <HrPasswordLink />
         {filters.data ? (
           <div className="rounded-xl border border-line bg-panel p-3 text-xs text-muted">
             <div className="mb-1.5 text-[11px] font-medium tracking-[0.08em] text-dim uppercase">Attendance rules</div>

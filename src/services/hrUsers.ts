@@ -82,7 +82,23 @@ export function hrName(req: Request): string {
   return req.hr.name;
 }
 
+/** An HR member changes their own password (current password required). */
+export async function changeOwnPassword(name: string, current: string, next: string, ip: string): Promise<void> {
+  if (next.length < 9 || next.length > 128) throw new HrAuthError("New password must be at least 9 characters.", 400);
+  if (!/[A-Za-z]/.test(next) || !/\d/.test(next)) throw new HrAuthError("New password needs letters and numbers.", 400);
+  if (next === current) throw new HrAuthError("New password must differ from the current one.", 400);
+  await verifyHr(name, current, ip); // same lockout and timing as sign-in
+  await prisma.hrUser.update({ where: { name: name.trim() }, data: { passwordHash: hashPassword(next) } });
+  logger.info({ hr: name.trim(), ip }, "HR password changed");
+}
+
 // --------------------------------------------------- account administration
+
+export async function setHrEmail(name: string, email: string): Promise<void> {
+  const e = email.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) throw new Error("Invalid email.");
+  await prisma.hrUser.update({ where: { name: name.trim() }, data: { email: e } });
+}
 
 export async function createHr(name: string): Promise<string> {
   const n = name.trim();
@@ -103,5 +119,5 @@ export async function setHrActive(name: string, active: boolean): Promise<void> 
 }
 
 export async function listHr() {
-  return prisma.hrUser.findMany({ orderBy: { name: "asc" }, select: { name: true, active: true, createdAt: true, lastUsedAt: true } });
+  return prisma.hrUser.findMany({ orderBy: { name: "asc" }, select: { name: true, email: true, active: true, createdAt: true, lastUsedAt: true } });
 }

@@ -122,7 +122,7 @@ async function computeOrgInsights(guildId, from, to) {
         prisma.leaveRequest.count({ where: { guildId, status: "pending" } }),
         prisma.ticket.count({ where: { guildId, status: { in: ["open", "claimed"] } } }),
         prisma.warn.count({
-            where: { guildId, createdAt: { gte: rangeStart, lt: rangeEnd }, status: { notIn: ["proposed", "dismissed"] } },
+            where: { guildId, createdAt: { gte: rangeStart, lt: rangeEnd }, status: { notIn: ["proposed", "dismissed", "revoked"] } },
         }),
         prisma.meeting.findMany({
             where: { guildId, startAt: { gte: rangeStart, lt: rangeEnd }, status: { not: "cancelled" } },
@@ -422,7 +422,7 @@ export async function memberInsights(guildId, userId, month, from, to) {
         }),
         // Drafts awaiting HR review and dismissed warnings were never issued.
         prisma.warn.findMany({
-            where: { guildId, userId, status: { notIn: ["proposed", "dismissed"] } },
+            where: { guildId, userId, status: { notIn: ["proposed", "dismissed", "revoked"] } },
             orderBy: { createdAt: "desc" },
         }),
         prisma.ticket.findMany({

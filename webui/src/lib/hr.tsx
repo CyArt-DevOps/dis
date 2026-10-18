@@ -268,3 +268,119 @@ export function useHrPost() {
     [withHr]
   );
 }
+
+/** Lets an HR member replace their password (current one required). */
+export function HrPasswordLink() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className="px-1 text-[11px] text-dim hover:text-fg">
+        Change HR password
+      </button>
+      {open ? <ChangePasswordDialog onClose={() => setOpen(false)} /> : null}
+    </>
+  );
+}
+
+function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
+  const [names, setNames] = useState<string[]>([]);
+  const [name, setName] = useState(() => {
+    try {
+      return localStorage.getItem(NAME_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [again, setAgain] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
+
+  useEffect(() => {
+    void get<string[]>("/api/hr/names")
+      .then((n) => {
+        setNames(n);
+        setName((cur) => (n.includes(cur) ? cur : n[0] ?? ""));
+      })
+      .catch(() => setNames([]));
+  }, []);
+
+  const problem =
+    next && next.length < 9
+      ? "At least 9 characters."
+      : next && (!/[A-Za-z]/.test(next) || !/\d/.test(next))
+        ? "Use letters and numbers."
+        : again && again !== next
+          ? "Passwords don't match."
+          : null;
+
+  const submit = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/hr/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, current, next }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Could not change the password.");
+      setMsg({ tone: "good", text: "Password changed. Use the new one from now on." });
+      setCurrent("");
+      setNext("");
+      setAgain("");
+    } catch (e) {
+      setMsg({ tone: "bad", text: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const input =
+    "mt-1.5 h-10 w-full rounded-full border border-line-strong bg-panel px-4 text-sm text-fg outline-none placeholder:text-dim focus-visible:ring-2 focus-visible:ring-white/30";
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/75 p-4 backdrop-blur-sm" onClick={() => !busy && onClose()}>
+      <form
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+        className="w-full max-w-sm space-y-3 rounded-2xl border border-line-strong bg-panel p-6 shadow-2xl"
+      >
+        <h2 className="text-gradient text-lg font-semibold">Change HR password</h2>
+        <label className="block text-xs text-muted">
+          Name
+          <Select label="HR name" className="mt-1.5" value={name} onChange={setName} options={names.map((n) => ({ value: n, label: n }))} />
+        </label>
+        <label className="block text-xs text-muted">
+          Current password
+          <input type="password" autoComplete="off" value={current} onChange={(e) => setCurrent(e.target.value)} className={input} />
+        </label>
+        <label className="block text-xs text-muted">
+          New password
+          <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} className={input} />
+        </label>
+        <label className="block text-xs text-muted">
+          Repeat new password
+          <input type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} className={input} />
+        </label>
+        {problem ? <p className="text-xs text-amber-300">{problem}</p> : null}
+        {msg ? (
+          <p className={cx("rounded-lg border px-3 py-2 text-xs", msg.tone === "good" ? "border-emerald-400/25 bg-emerald-400/5 text-emerald-300" : "border-rose-400/25 bg-rose-400/5 text-rose-300")}>
+            {msg.text}
+          </p>
+        ) : null}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Close
+          </Button>
+          <Button variant="primary" type="submit" disabled={busy || !name || !current || !next || next !== again || Boolean(problem)}>
+            {busy ? "Saving…" : "Change password"}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}

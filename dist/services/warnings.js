@@ -403,4 +403,111 @@ export function stopWarningSweep() {
         clearInterval(timer);
     timer = null;
 }
+// ------------------------------------------------------ profile management
+/** Every warning a member has (drafts included), newest first, with HR notes. */
+export async function memberWarnings(guildId, userId) {
+    const rows = await prisma.warn.findMany({ where: { guildId, userId }, orderBy: { createdAt: "asc" } });
+    const notes = rows.length
+        ? await prisma.warnNote.findMany({ where: { warnId: { in: rows.map((r) => r.id) } }, orderBy: { createdAt: "asc" } })
+        : [];
+    const byWarn = new Map();
+    for (const n of notes)
+        byWarn.set(n.warnId, [...(byWarn.get(n.warnId) ?? []), n]);
+    let strike = 0;
+    const now = Date.now();
+    const out = rows.map((r) => {
+        const counts = STRIKE_STATUSES.includes(r.status);
+        if (counts)
+            strike++;
+        return {
+            id: r.id,
+            source: r.source,
+            kind: r.kind,
+            status: r.status,
+            reason: r.reason,
+            days: r.days ? r.days.split(",") : [],
+            issuedBy: r.issuedBy ?? (r.modId === "system" ? "Attendance system" : r.modId),
+            reviewedBy: r.reviewedBy,
+            createdAt: r.createdAt,
+            sentAt: r.sentAt,
+            ackDueAt: r.ackDueAt,
+            acknowledgedAt: r.acknowledgedAt,
+            overdue: r.status === "sent" && r.ackDueAt !== null && r.ackDueAt.getTime() < now,
+            strikeNumber: counts ? strike : null,
+            notes: (byWarn.get(r.id) ?? []).map((n) => ({
+                id: n.id,
+                author: n.author,
+                body: n.body,
+                kind: n.kind,
+                notified: n.notified,
+                createdAt: n.createdAt,
+            })),
+        };
+    });
+    return {
+        strikes: strike,
+        strikeLimit: cfg().strikeLimit,
+        botConnected: Boolean(botClient()),
+        warnings: out.reverse(),
+    };
+}
+async function dmMember(userId, embed) {
+    const client = botClient();
+    if (!client)
+        return false;
+    try {
+        const user = await client.users.fetch(userId);
+        await user.send({ embeds: [embed] });
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * Withdraw a warning. An issued one becomes "revoked" (no longer a strike)
+ * and the member is told; a draft is simply dismissed. The reason is kept as
+ * a note either way.
+ */
+export async function revokeWarning(id, guildId, by, reason) {
+    const w = await prisma.warn.findUnique({ where: { id } });
+    if (!w || w.guildId !== guildId)
+        throw new WarningError("Warning not found.");
+    if (w.status === "revoked" || w.status === "dismissed")
+        throw new WarningError("This warning is already withdrawn.");
+    const why = String(reason ?? "").trim();
+    if (why.length < 3 || why.length > 1000)
+        throw new WarningError("Give a reason for revoking (3–1000 characters).");
+    const wasIssued = w.status !== "proposed";
+    await prisma.warn.update({ where: { id }, data: { status: wasIssued ? "revoked" : "dismissed", reviewedBy: by } });
+    const notified = wasIssued
+        ? await dmMember(w.userId, new EmbedBuilder()
+            .setColor(0x34d399)
+            .setTitle(`Warning #${id} revoked`)
+            .setDescription(`HR has revoked warning #${id}. It no longer counts against you.\n\n**Note from HR**\n${why}`)
+            .setTimestamp(new Date()))
+        : false;
+    await prisma.warnNote.create({ data: { warnId: id, author: by, body: why, kind: "revoke", notified } });
+    logger.info({ warn: id, by, notified }, "Warning revoked");
+    return { notified };
+}
+/** HR adds details to a warning; optionally DMs them to the member. */
+export async function addWarningNote(id, guildId, by, input) {
+    const w = await prisma.warn.findUnique({ where: { id } });
+    if (!w || w.guildId !== guildId)
+        throw new WarningError("Warning not found.");
+    const body = String(input.body ?? "").trim();
+    if (body.length < 3 || body.length > 2000)
+        throw new WarningError("Details must be 3–2000 characters.");
+    const wantNotify = input.notify === true && w.status !== "proposed" && w.status !== "dismissed";
+    const notified = wantNotify
+        ? await dmMember(w.userId, new EmbedBuilder()
+            .setColor(0xf97316)
+            .setTitle(`Update to warning #${id}`)
+            .setDescription(`HR has added details to warning #${id}.\n\n${body}`)
+            .setTimestamp(new Date()))
+        : false;
+    await prisma.warnNote.create({ data: { warnId: id, author: by, body, kind: "note", notified } });
+    return { notified };
+}
 //# sourceMappingURL=warnings.js.map
