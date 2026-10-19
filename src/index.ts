@@ -126,9 +126,12 @@ async function main() {
     stopDashboard();
     // Credit + close active voice sessions before the DB closes, so a deploy
     // doesn't leave dangling sessions that accrue downtime on the next boot.
-    await closeAllOpenSessions().catch((err) =>
-      logger.error({ err }, "Failed closing voice sessions on shutdown")
-    );
+    // Bounded: the host kills a process that doesn't stop promptly, and boot
+    // recovery closes whatever is left from the last checkpoint anyway.
+    await Promise.race([
+      closeAllOpenSessions().catch((err) => logger.error({ err }, "Failed closing voice sessions on shutdown")),
+      new Promise((r) => setTimeout(r, 15_000)),
+    ]);
     await disconnectDb().catch(() => {});
     client.destroy();
     process.exit(0);

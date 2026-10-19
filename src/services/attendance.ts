@@ -261,7 +261,14 @@ export async function closeAllOpenSessions(): Promise<number> {
   const open = await prisma.voiceSession.findMany({ where: { leftAt: null } });
   if (open.length === 0) return 0;
   const now = new Date();
-  for (const s of open) await closeSession(s, now);
+  // In parallel batches: one at a time, a full server (200+ people in voice)
+  // took minutes over the remote database and the host had to kill the
+  // process. Anything not closed here is recovered at boot from the last
+  // checkpoint (closeStaleSessionsOnBoot).
+  const BATCH = 25;
+  for (let i = 0; i < open.length; i += BATCH) {
+    await Promise.all(open.slice(i, i + BATCH).map((s) => closeSession(s, now).catch(() => {})));
+  }
   logger.info({ count: open.length }, "Closed open voice sessions on shutdown");
   return open.length;
 }
