@@ -12,6 +12,18 @@ function cid(i) {
         return i.customId;
     return undefined;
 }
+/**
+ * The ticket a button belongs to. Looked up by channel first: the id baked into
+ * the custom id goes stale if tickets are ever renumbered, the channel does not.
+ */
+async function ticketIdFor(i) {
+    if (i.channelId) {
+        const row = await prisma.ticket.findFirst({ where: { channelId: i.channelId }, select: { id: true } });
+        if (row)
+            return row.id;
+    }
+    return Number(cid(i).split(":")[2]);
+}
 export const openHandler = {
     id: "ticket:open",
     matches: (i) => i.isButton() && cid(i) === TICKET_IDS.open,
@@ -116,7 +128,7 @@ export const claimHandler = {
             await i.reply({ content: "Staff only.", flags: MessageFlags.Ephemeral });
             return;
         }
-        const id = Number(cid(i).split(":")[2]);
+        const id = await ticketIdFor(i);
         // claimTicket edits channel permissions (Discord API) — defer the public
         // reply first so it can't exceed the 3s window.
         await i.deferReply();
@@ -131,7 +143,7 @@ export const closeHandler = {
         if (!i.isButton() || !i.inCachedGuild())
             return;
         const member = await i.guild.members.fetch(i.user.id);
-        const id = Number(cid(i).split(":")[2]);
+        const id = await ticketIdFor(i);
         await i.reply({ content: "Closing ticket..." });
         try {
             await closeTicket(i.guild, id, member);
@@ -151,7 +163,7 @@ export const reopenHandler = {
         if (!i.isButton() || !i.inCachedGuild())
             return;
         const member = await i.guild.members.fetch(i.user.id);
-        const id = Number(cid(i).split(":")[2]);
+        const id = await ticketIdFor(i);
         const channel = i.channel;
         if (!channel || channel.type !== ChannelType.GuildText) {
             await i.reply({ content: "Invalid channel.", flags: MessageFlags.Ephemeral });
@@ -184,7 +196,7 @@ export const vcGrantHandler = {
             await i.reply({ content: "Staff only.", flags: MessageFlags.Ephemeral });
             return;
         }
-        const id = Number(cid(i).split(":")[2]);
+        const id = await ticketIdFor(i);
         const ticket = await prisma.ticket.findUnique({ where: { id } });
         if (!ticket) {
             await i.reply({ content: "Ticket not found.", flags: MessageFlags.Ephemeral });
