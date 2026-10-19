@@ -15,6 +15,7 @@ import { shiftDayKey, tzDateKey, tzDayStartUtc } from "../lib/time.js";
 import { buildCalendars } from "./calendar.js";
 import { shortStreak } from "../lib/streak.js";
 import type { InteractionHandler } from "../core/registry.js";
+import { notifyMember } from "./notify.js";
 
 /**
  * Formal warnings and the three-strike rule.
@@ -148,7 +149,7 @@ export async function runHoursSweep(guildId: string): Promise<SweepResult> {
 
 // ------------------------------------------------------------------ sending
 
-export async function sendWarning(id: number, reviewedBy?: string): Promise<{ status: string }> {
+export async function sendWarning(id: number, reviewedBy?: string): Promise<{ status: string; via?: string }> {
   const w = await prisma.warn.findUnique({ where: { id } });
   if (!w) throw new WarningError("Warning not found.");
   if (w.status !== "proposed" && w.status !== "dm-failed") throw new WarningError("This warning was already sent.");
@@ -189,20 +190,21 @@ export async function sendWarning(id: number, reviewedBy?: string): Promise<{ st
     new ButtonBuilder().setCustomId(`${ACK_PREFIX}${w.id}`).setLabel("Acknowledge").setStyle(ButtonStyle.Primary)
   );
 
-  try {
-    const user = await client.users.fetch(w.userId);
-    const msg = await user.send({ embeds: [embed], components: [row] });
-    await prisma.warn.update({
-      where: { id },
-      data: { status: "sent", sentAt: new Date(), ackDueAt, dmChannelId: msg.channelId, dmMessageId: msg.id, reviewedBy },
-    });
-    return { status: "sent" };
-  } catch (err) {
-    // DMs closed or user gone: the warning still stands on record.
-    logger.warn({ err, warn: id }, "Warning DM failed");
+  const guild = botGuild(w.guildId);
+  const delivery = guild
+    ? await notifyMember(guild, w.userId, { embeds: [embed], components: [row], threadName: `Warning #${w.id}` })
+    : { via: "none" as const, channelId: null, messageId: null };
+  if (delivery.via === "none") {
+    // DMs and the private-thread fallback both failed: the warning still stands on record.
+    logger.warn({ warn: id }, "Warning could not be delivered");
     await prisma.warn.update({ where: { id }, data: { status: "dm-failed", sentAt: new Date(), ackDueAt, reviewedBy } });
     return { status: "dm-failed" };
   }
+  await prisma.warn.update({
+    where: { id },
+    data: { status: "sent", sentAt: new Date(), ackDueAt, dmChannelId: delivery.channelId, dmMessageId: delivery.messageId, reviewedBy },
+  });
+  return { status: "sent", via: delivery.via };
 }
 
 let bulkRunning = false;
@@ -492,16 +494,11 @@ export async function memberWarnings(guildId: string, userId: string) {
   };
 }
 
-async function dmMember(userId: string, embed: EmbedBuilder): Promise<boolean> {
-  const client = botClient();
-  if (!client) return false;
-  try {
-    const user = await client.users.fetch(userId);
-    await user.send({ embeds: [embed] });
-    return true;
-  } catch {
-    return false;
-  }
+/** DM, or the member's private thread when DMs can't be delivered. */
+async function dmMember(guildId: string, userId: string, embed: EmbedBuilder, threadName: string): Promise<boolean> {
+  const guild = botGuild(guildId);
+  if (!guild) return false;
+  return (await notifyMember(guild, userId, { embeds: [embed], threadName })).via !== "none";
 }
 
 /**
@@ -524,12 +521,14 @@ export async function revokeWarning(
   await prisma.warn.update({ where: { id }, data: { status: wasIssued ? "revoked" : "dismissed", reviewedBy: by } });
   const notified = wasIssued
     ? await dmMember(
+        w.guildId,
         w.userId,
         new EmbedBuilder()
           .setColor(0x34d399)
           .setTitle(`Warning #${id} revoked`)
           .setDescription(`HR has revoked warning #${id}. It no longer counts against you.\n\n**Note from HR**\n${why}`)
-          .setTimestamp(new Date())
+          .setTimestamp(new Date()),
+        `Warning #${id} revoked`
       )
     : false;
   await prisma.warnNote.create({ data: { warnId: id, author: by, body: why, kind: "revoke", notified } });
@@ -551,12 +550,14 @@ export async function addWarningNote(
   const wantNotify = input.notify === true && w.status !== "proposed" && w.status !== "dismissed";
   const notified = wantNotify
     ? await dmMember(
+        w.guildId,
         w.userId,
         new EmbedBuilder()
           .setColor(0xf97316)
           .setTitle(`Update to warning #${id}`)
           .setDescription(`HR has added details to warning #${id}.\n\n${body}`)
-          .setTimestamp(new Date())
+          .setTimestamp(new Date()),
+        `Warning #${id} update`
       )
     : false;
   await prisma.warnNote.create({ data: { warnId: id, author: by, body, kind: "note", notified } });

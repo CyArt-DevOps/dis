@@ -25,6 +25,7 @@ import { logger } from "../core/logger.js";
 import { isFounder } from "../lib/rbac.js";
 
 import { ticketTypeToOffice } from "./meeting.js";
+import { baseTicketsCategory, pruneEmptyOverflow, ticketsCategoryWithRoom } from "./ticketCategory.js";
 
 export const TICKET_IDS = {
   open: "ticket:open",
@@ -170,12 +171,9 @@ export function detailsModal(typeKey: string, extra?: string): ModalBuilder {
   return modal;
 }
 
-function ticketsCategory(guild: Guild): CategoryChannel | undefined {
-  return guild.channels.cache.find(
-    (c) =>
-      c.type === ChannelType.GuildCategory &&
-      c.name === org.categories.tickets.name
-  ) as CategoryChannel | undefined;
+/** A TICKETS category with a free slot (overflow categories are created as needed). */
+async function ticketsCategory(guild: Guild): Promise<CategoryChannel | undefined> {
+  return (await ticketsCategoryWithRoom(guild)) ?? baseTicketsCategory(guild);
 }
 
 function archiveCategory(guild: Guild): CategoryChannel | undefined {
@@ -240,7 +238,7 @@ export async function createTicket(
   details: string,
   staffRoleOverride?: string[]
 ): Promise<{ channelId: string; ticketId: number }> {
-  const category = ticketsCategory(guild);
+  const category = await ticketsCategory(guild);
   if (!category) throw new Error("TICKETS category missing. Run /setup.");
 
   // Anti-spam: cap how many tickets one person can have open at once.
@@ -458,7 +456,7 @@ export async function reopenTicket(
     SendMessages: true,
     ReadMessageHistory: true,
   });
-  const category = ticketsCategory(guild);
+  const category = await ticketsCategory(guild);
   if (category)
     await channel.setParent(category.id, { lockPermissions: false }).catch(() => {});
 
@@ -510,6 +508,8 @@ async function sweepArchivedTickets(client: Client): Promise<void> {
       .catch(() => {});
   }
   if (due.length > 0) logger.info({ count: due.length }, "Deleted expired archived tickets");
+  // Closing tickets moves them out of TICKETS; drop overflow categories left empty.
+  for (const guild of client.guilds.cache.values()) await pruneEmptyOverflow(guild).catch(() => {});
 }
 
 export function startTicketArchiveSweep(client: Client): void {

@@ -9,6 +9,7 @@ import { isStaff } from "../lib/rbac.js";
 import { logEmbed, postLog } from "../lib/log.js";
 import { formatDuration, formatInTz, parseDateTime } from "../lib/time.js";
 import { logger } from "../core/logger.js";
+import { dmPaused, notifyMember } from "../services/notify.js";
 function cid(i) {
     if (i.isButton() || i.isStringSelectMenu() || i.isModalSubmit())
         return i.customId;
@@ -50,7 +51,12 @@ async function notifyProjectTeamLead(guild, internUserId, approvedDays, startAt,
         .setTimestamp(new Date());
     // DM each Team Lead (best-effort).
     const dmFailures = [];
+    // Skip DMs while Discord has them quarantined; the Team Lead chat post below covers it.
     for (const tl of tlRole.members.values()) {
+        if (dmPaused()) {
+            dmFailures.push(tl.id);
+            continue;
+        }
         await tl.send({ embeds: [embed] }).catch(() => dmFailures.push(tl.id));
     }
     // Fallback: post in the project's Team Lead chat channel so it's not missed
@@ -156,9 +162,10 @@ export async function finalizeDecision(i, staff, id, approve, approvedDays) {
         else {
             dm.setDescription("Your leave request was not approved. Please contact HR if you have questions.");
         }
-        await user.send({ embeds: [dm] }).catch(() => {
-            logger.debug({ user: result.userId }, "Leave decision DM not delivered (DMs closed)");
-        });
+        // DM, or a private thread in their team channel if DMs can't be delivered.
+        const delivery = await notifyMember(staff.guild, result.userId, { embeds: [dm], threadName: `Leave #${id} ${result.status}` });
+        if (delivery.via === "none")
+            logger.warn({ user: result.userId, leave: id }, "Leave decision could not be delivered");
     }
     // On approval, notify the intern's project Team Lead so they can arrange
     // handovers for any deadlines on the covered days.

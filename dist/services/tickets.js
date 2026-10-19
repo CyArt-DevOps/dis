@@ -5,6 +5,7 @@ import { logEmbed, postLog } from "../lib/log.js";
 import { logger } from "../core/logger.js";
 import { isFounder } from "../lib/rbac.js";
 import { ticketTypeToOffice } from "./meeting.js";
+import { baseTicketsCategory, pruneEmptyOverflow, ticketsCategoryWithRoom } from "./ticketCategory.js";
 export const TICKET_IDS = {
     open: "ticket:open",
     openproject: "ticket:openproject", // direct project-support entry
@@ -106,9 +107,9 @@ export function detailsModal(typeKey, extra) {
     modal.addComponents(new ActionRowBuilder().addComponents(subject), new ActionRowBuilder().addComponents(details));
     return modal;
 }
-function ticketsCategory(guild) {
-    return guild.channels.cache.find((c) => c.type === ChannelType.GuildCategory &&
-        c.name === org.categories.tickets.name);
+/** A TICKETS category with a free slot (overflow categories are created as needed). */
+async function ticketsCategory(guild) {
+    return (await ticketsCategoryWithRoom(guild)) ?? baseTicketsCategory(guild);
 }
 function archiveCategory(guild) {
     return guild.channels.cache.find((c) => c.type === ChannelType.GuildCategory &&
@@ -149,7 +150,7 @@ function controlRow(ticketId, typeKey) {
 }
 export const MAX_OPEN_TICKETS_PER_USER = 3;
 export async function createTicket(guild, opener, type, subject, details, staffRoleOverride) {
-    const category = ticketsCategory(guild);
+    const category = await ticketsCategory(guild);
     if (!category)
         throw new Error("TICKETS category missing. Run /setup.");
     // Anti-spam: cap how many tickets one person can have open at once.
@@ -311,7 +312,7 @@ export async function reopenTicket(guild, ticketId, staff) {
         SendMessages: true,
         ReadMessageHistory: true,
     });
-    const category = ticketsCategory(guild);
+    const category = await ticketsCategory(guild);
     if (category)
         await channel.setParent(category.id, { lockPermissions: false }).catch(() => { });
     await prisma.ticket.update({
@@ -356,6 +357,9 @@ async function sweepArchivedTickets(client) {
     }
     if (due.length > 0)
         logger.info({ count: due.length }, "Deleted expired archived tickets");
+    // Closing tickets moves them out of TICKETS; drop overflow categories left empty.
+    for (const guild of client.guilds.cache.values())
+        await pruneEmptyOverflow(guild).catch(() => { });
 }
 export function startTicketArchiveSweep(client) {
     if (archiveSweepTimer)

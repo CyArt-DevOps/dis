@@ -3,6 +3,7 @@ import { prisma } from "../core/db.js";
 import { org } from "../config/loader.js";
 import { logger } from "../core/logger.js";
 import { formatDuration, formatInTz, inclusiveDaySpan, tzDateKey } from "../lib/time.js";
+import { ticketsCategoryWithRoom } from "./ticketCategory.js";
 export const LEAVE_IDS = {
     approve: "leave:approve", // leave:approve:<id>
     reject: "leave:reject", // leave:reject:<id>
@@ -191,7 +192,8 @@ export async function createLeaveRequest(member, type, startAt, endAt, reason) {
     const A = PermissionFlagsBits.AttachFiles;
     const R = PermissionFlagsBits.ReadMessageHistory;
     const M = PermissionFlagsBits.ManageMessages;
-    const ticketsCat = member.guild.channels.cache.find((c) => c.type === ChannelType.GuildCategory && c.name === org.categories.tickets.name);
+    // Overflow-aware: never fails because TICKETS hit Discord's 50-channel cap.
+    const ticketsCat = await ticketsCategoryWithRoom(member.guild).catch(() => undefined);
     const overwrites = [
         { id: member.guild.roles.everyone.id, deny: [V] },
         { id: member.id, allow: [V, S, A, R] },

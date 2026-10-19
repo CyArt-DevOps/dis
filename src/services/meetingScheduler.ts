@@ -17,6 +17,7 @@ import { roleNames } from "../lib/names.js";
 import { getOfficeVoiceChannel, officeOfVoiceChannel } from "./meeting.js";
 import { discordTimestamp, formatInTz } from "../lib/time.js";
 import type { Meeting } from "@prisma/client";
+import { ticketsCategoryWithRoom } from "./ticketCategory.js";
 
 let client: Client | null = null;
 let sweepTimer: NodeJS.Timeout | null = null;
@@ -182,9 +183,7 @@ async function createPeopleMeetingChannel(guild: Guild, m: Meeting): Promise<Tex
   const staffIds = ["Founder", "Manager", "HR"]
     .map((n) => guild.roles.cache.find((r) => r.name === n)?.id)
     .filter((x): x is string => !!x);
-  const ticketsCat = guild.channels.cache.find(
-    (c) => c.type === ChannelType.GuildCategory && c.name === org.categories.tickets.name
-  );
+  const ticketsCat = await ticketsCategoryWithRoom(guild).catch(() => undefined);
 
   const overwrites: OverwriteResolvable[] = [
     { id: guild.roles.everyone.id, deny: [V] },

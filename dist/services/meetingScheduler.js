@@ -5,6 +5,7 @@ import { findProject, org } from "../config/loader.js";
 import { roleNames } from "../lib/names.js";
 import { getOfficeVoiceChannel, officeOfVoiceChannel } from "./meeting.js";
 import { discordTimestamp, formatInTz } from "../lib/time.js";
+import { ticketsCategoryWithRoom } from "./ticketCategory.js";
 let client = null;
 let sweepTimer = null;
 /** Hooks so Phase C (attendance) can plug in without touching the scheduler. */
@@ -137,7 +138,7 @@ async function createPeopleMeetingChannel(guild, m) {
     const staffIds = ["Founder", "Manager", "HR"]
         .map((n) => guild.roles.cache.find((r) => r.name === n)?.id)
         .filter((x) => !!x);
-    const ticketsCat = guild.channels.cache.find((c) => c.type === ChannelType.GuildCategory && c.name === org.categories.tickets.name);
+    const ticketsCat = await ticketsCategoryWithRoom(guild).catch(() => undefined);
     const overwrites = [
         { id: guild.roles.everyone.id, deny: [V] },
         ...ids.map((id) => ({ id, allow: [V, R] })), // invited: read-only
