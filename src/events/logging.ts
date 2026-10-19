@@ -26,7 +26,19 @@ export function registerLogging(client: Client): void {
   });
 
   client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
-    if (oldMember.partial) return;
+    // A partial oldMember (common right after a restart, before the member
+    // cache refills) has no reliable previous nickname/roles, so we can't emit
+    // the diff-based logs below. But we must NOT skip the profile sync: a role
+    // edit that lands while oldMember is partial would otherwise never reach the
+    // DB, leaving the member stale (e.g. routed to #general instead of their
+    // module chat). syncMemberProfileFromRoles reconciles from newMember's
+    // CURRENT roles and needs no diff, so run it regardless.
+    if (oldMember.partial) {
+      await syncMemberProfileFromRoles(newMember).catch((err) =>
+        logger.warn({ err, user: newMember.id }, "Profile sync from roles failed (partial)")
+      );
+      return;
+    }
     if (oldMember.nickname !== newMember.nickname) {
       await postLog(
         newMember.guild,
