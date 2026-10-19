@@ -28,9 +28,9 @@ const APPLY = process.argv.includes("--apply");
 
 /** table -> last id that is still in the original, un-jumped sequence */
 const PLAN = [
-  { table: "ticket", lastGood: 447 },
-  { table: "leaveRequest", lastGood: 426 },
-  { table: "meeting", lastGood: 118 },
+  { table: "ticket", lastGood: 524 },
+  { table: "leaveRequest", lastGood: 499 },
+  { table: "meeting", lastGood: 122 },
 ] as const;
 
 type Mapping = { table: string; moves: { from: number; to: number }[]; nextAutoIncrement: number };

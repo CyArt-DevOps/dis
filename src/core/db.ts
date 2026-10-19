@@ -22,6 +22,43 @@ base.$on("error", (e) => logger.error({ prisma: e.message }, "Prisma error"));
 const NON_IDEMPOTENT = new Set(["create", "createMany", "createManyAndReturn"]);
 
 /**
+ * Tables whose ids people read: ticket titles, `ticket-<id>` / `leave-<id>`
+ * channel names, meeting numbers.
+ *
+ * TiDB's auto-increment cannot be trusted to stay sequential. With the default
+ * cache it jumps by 30000 after every restart; even with AUTO_ID_CACHE 1 the
+ * serverless tier restarts the allocator when it scales to zero and skips ahead
+ * by its 4000-id batch (ticket 524 -> 4002, leave 4002 -> 8002). So these ids
+ * are assigned here as MAX(id) + 1 instead of by the database.
+ */
+const SEQUENTIAL = new Set(["Ticket", "LeaveRequest", "Meeting"]);
+
+async function createSequential(
+  model: string,
+  args: { data: Record<string, unknown> },
+  query: (a: unknown) => Promise<unknown>
+): Promise<unknown> {
+  if (args.data.id !== undefined) return query(args);
+  for (let attempt = 0; ; attempt++) {
+    const [row] = await withDbRetry(() =>
+      base.$queryRawUnsafe<{ next: bigint | number }[]>(
+        `SELECT COALESCE(MAX(id), 0) + 1 AS next FROM \`${model}\``
+      )
+    );
+    const id = Number(row!.next);
+    try {
+      return await query({ ...args, data: { ...args.data, id } });
+    } catch (err) {
+      // Two creates raced for the same id: the loser inserted nothing, so
+      // taking the next free id is safe (unlike retrying a dropped connection).
+      const e = err as { code?: string; meta?: { target?: unknown } };
+      const pkClash = e?.code === "P2002" && /PRIMARY|\bid\b/i.test(String(e.meta?.target ?? ""));
+      if (!pkClash || attempt >= 4) throw err;
+    }
+  }
+}
+
+/**
  * Retry transient database failures for every query, not just the handful of
  * call sites that remembered to ask for it.
  *
@@ -33,7 +70,10 @@ const NON_IDEMPOTENT = new Set(["create", "createMany", "createManyAndReturn"]);
  */
 export const prisma = base.$extends({
   query: {
-    async $allOperations({ operation, args, query }) {
+    async $allOperations({ model, operation, args, query }) {
+      if (operation === "create" && model && SEQUENTIAL.has(model)) {
+        return createSequential(model, args as { data: Record<string, unknown> }, query as never);
+      }
       if (NON_IDEMPOTENT.has(operation)) return query(args);
       return withDbRetry(() => query(args));
     },

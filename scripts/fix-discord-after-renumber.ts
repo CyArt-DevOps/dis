@@ -58,16 +58,41 @@ client.once(Events.ClientReady, async (c) => {
     renamed++;
   }
 
-  // Tickets: name only.
-  for (const { to } of movesFor("ticket")) {
-    const row = await prisma.ticket.findUnique({ where: { id: to }, select: { channelId: true, status: true } });
+  // Tickets: name, topic, and the opening card edited in place. The Claim /
+  // Close / Grant VC buttons carry the ticket id in their custom id, so a stale
+  // card would answer "not found".
+  for (const { from, to } of movesFor("ticket")) {
+    const row = await prisma.ticket.findUnique({ where: { id: APPLY ? to : from }, select: { channelId: true, status: true } });
     if (!row?.channelId || row.status === "closed") continue;
     await rename(row.channelId, `ticket-${to}`);
+
+    const ch = guild.channels.cache.get(row.channelId);
+    if (!ch || ch.type !== ChannelType.GuildText) continue;
+    const channel = ch as TextChannel;
+    const swap = (s: string) => s.replace(new RegExp(`#${from}(?!\\d)`, "g"), `#${to}`);
+    if (channel.topic?.includes(`#${from}`) && APPLY) await channel.setTopic(swap(channel.topic));
+
+    const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+    for (const m of recent?.values() ?? []) {
+      if (m.author.id !== c.user.id) continue;
+      const comps = JSON.stringify(m.components.map((r) => r.toJSON()));
+      const hasBtn = comps.includes(`:${from}"`);
+      const hasTitle = m.embeds.some((e) => e.title?.includes(`#${from}`));
+      if (!hasBtn && !hasTitle) continue;
+      console.log(`   editing card in #${channel.name} (message ${m.id})`);
+      if (APPLY) {
+        await m.edit({
+          embeds: m.embeds.map((e) => (e.title ? EmbedBuilder.from(e).setTitle(swap(e.title)) : EmbedBuilder.from(e))),
+          components: JSON.parse(comps.split(`:${from}"`).join(`:${to}"`)),
+        });
+      }
+      reposted++;
+    }
   }
 
   // Leaves: name, plus a working approval card for anything still pending.
-  for (const { to } of movesFor("leaveRequest")) {
-    const row = await prisma.leaveRequest.findUnique({ where: { id: to } });
+  for (const { from, to } of movesFor("leaveRequest")) {
+    const row = await prisma.leaveRequest.findUnique({ where: { id: APPLY ? to : from } });
     if (!row?.channelId) continue;
     await rename(row.channelId, `leave-${to}`);
     if (row.status !== "pending") continue;
