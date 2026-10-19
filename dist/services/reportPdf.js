@@ -189,6 +189,13 @@ export async function buildMemberReport(guildId, userId, period, preparedBy) {
             Subject: `Intern attendance and compliance report, ${period.label}`,
         },
     });
+    // No em/en dashes anywhere in the report, including HR-typed text (warning
+    // reasons, notes, leave reasons): "a — b" becomes "a, b" and "–" becomes "-".
+    const clean = (v) => (typeof v === "string" ? v.replace(/\s*—\s*/g, ", ").replace(/–/g, "-") : v);
+    const rawText = doc.text.bind(doc);
+    const rawHeight = doc.heightOfString.bind(doc);
+    doc.text = (t, ...rest) => rawText(clean(t), ...rest);
+    doc.heightOfString = (t, ...rest) => rawHeight(clean(t), ...rest);
     const chunks = [];
     doc.on("data", (c) => chunks.push(c));
     const done = new Promise((res) => doc.on("end", () => res(Buffer.concat(chunks))));

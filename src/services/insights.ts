@@ -24,7 +24,7 @@ export interface Violation {
   kind: ViolationKind;
   severity: "high" | "medium" | "low";
   day: string;
-  /** Human sentence, e.g. "Joined 14:42 — 42 min after the 14:00 cutoff". */
+  /** Human sentence, e.g. "Joined 14:42, 42 min after the 14:00 cutoff". */
   detail: string;
   minutesLate?: number;
   servedSeconds?: number;
@@ -100,7 +100,7 @@ function dayViolations(d: CalendarDay): Violation[] {
       kind: "late-login",
       severity: late >= 120 ? "high" : late >= 30 ? "medium" : "low",
       day: d.day,
-      detail: `Joined ${hhmm(minutesIntoDay(d.day, d.firstJoinAt))} — ${late} min after the ${p.loginBy} cutoff`,
+      detail: `Joined ${hhmm(minutesIntoDay(d.day, d.firstJoinAt))}, ${late} min after the ${p.loginBy} cutoff`,
       minutesLate: late,
     });
   }
@@ -110,7 +110,7 @@ function dayViolations(d: CalendarDay): Violation[] {
       kind: "short-hours",
       severity: d.seconds < req / 2 ? "high" : short >= 3600 ? "medium" : "low",
       day: d.day,
-      detail: `Served ${hm(d.seconds)} of ${hm(req)} — ${hm(short)} short`,
+      detail: `Served ${hm(d.seconds)} of ${hm(req)}, ${hm(short)} short`,
       servedSeconds: d.seconds,
       requiredSeconds: req,
     });
