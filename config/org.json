@@ -23,15 +23,6 @@
       "moduleVoice": false
     },
     {
-      "key": "df-ir",
-      "name": "DF-IR",
-      "modules": 0,
-      "podsPerModule": 0,
-      "active": true,
-      "moduleChannels": false,
-      "moduleVoice": false
-    },
-    {
       "key": "cybreach",
       "name": "CyBreach",
       "modules": 5,
