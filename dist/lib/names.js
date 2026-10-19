@@ -26,5 +26,7 @@ export const channelNames = {
     leadershipVc: () => "Leadership VC",
     projectGeneral: () => "general",
     projectAnnouncements: () => "announcements",
+    /** Per-project, read-only: where the bot posts voice-session summaries. */
+    voiceActivity: (key) => `${key}-voice-activity`,
 };
 //# sourceMappingURL=names.js.map

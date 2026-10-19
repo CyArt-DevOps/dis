@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { moduleLabel, moduleShort, roleNames } from "../src/lib/names.js";
+import { channelNames, moduleLabel, moduleShort, roleNames } from "../src/lib/names.js";
 import type { ProjectDef } from "../src/config/loader.js";
 
 const plain: ProjectDef = {
@@ -37,5 +37,12 @@ describe("module naming", () => {
     expect(roleNames.module(named, 1)).toBe("CyBreach Module 1");
     expect(roleNames.pod(named, 5, 2)).toBe("CyBreach Team Velocity Pod 2");
     expect(roleNames.pod(named, 1, 2)).toBe("CyBreach Module 1 Pod 2");
+  });
+});
+
+describe("voice activity channel name", () => {
+  it("is one per project, keyed by the stable project key", () => {
+    expect(channelNames.voiceActivity("darktrace")).toBe("darktrace-voice-activity");
+    expect(channelNames.voiceActivity("chain-discovery")).toBe("chain-discovery-voice-activity");
   });
 });

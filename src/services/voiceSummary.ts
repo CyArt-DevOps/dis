@@ -16,10 +16,30 @@ import { logger } from "../core/logger.js";
 import { botGuild } from "../core/botClient.js";
 import { shiftDayKey, tzDateKey, tzDayStartUtc } from "../lib/time.js";
 import { holidayMap, isWorkingDay } from "./holidays.js";
+import { channelNames } from "../lib/names.js";
 import type { InteractionHandler } from "../core/registry.js";
 
 /**
- * When a member leaves voice, tell them in their own team channel how much
+ * The project's read-only voice-activity channel, the ONLY place summaries go
+ * (never #general, pod or module chats). Null if the project has none yet.
+ */
+export function voiceActivityChannel(guild: Guild, projectName: string | null): TextChannel | null {
+  const project = org.projects.find((p) => p.name === projectName);
+  if (!project) return null;
+  const cat = guild.channels.cache.find(
+    (x) => x.type === ChannelType.GuildCategory && x.name === project.name.toUpperCase()
+  );
+  if (!cat) return null;
+  const ch = guild.channels.cache.find(
+    (x) => x.type === ChannelType.GuildText && x.parentId === cat.id && x.name === channelNames.voiceActivity(project.key)
+  ) as TextChannel | undefined;
+  const me = guild.members.me;
+  if (!ch || (me && !ch.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]))) return null;
+  return ch;
+}
+
+/**
+ * When a member leaves voice, tell them in their project's voice-activity channel how much
  * time they have served today — no command needed. Posting waits a short delay
  * so a quick reconnect doesn't spam, replaces that member's previous summary,
  * and removes itself after a while; the member can dismiss it sooner.
@@ -112,7 +132,8 @@ async function postSummary(guildId: string, userId: string): Promise<void> {
     select: { project: true, module: true, pod: true },
   });
   if (!m?.project) return;
-  const channel = memberChannel(guild, m);
+  // Only the project's voice-activity channel; no fallback to other channels.
+  const channel = voiceActivityChannel(guild, m.project);
   if (!channel) return;
 
   const p = org.attendancePolicy;

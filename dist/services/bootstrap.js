@@ -176,6 +176,49 @@ function adminRoleIds(roles) {
 function denyEveryone(guild) {
     return { id: guild.roles.everyone.id, deny: [VIEW] };
 }
+const voiceActivityChannelName = (p) => channelNames.voiceActivity(p.key);
+/**
+ * Read-only for the project (members read and press Dismiss, no chatting),
+ * writable by admins and the project's Team Lead.
+ */
+function voiceActivityOverwrites(guild, ids) {
+    const o = [
+        denyEveryone(guild),
+        ...ids.admins.map((id) => ({ id, allow: [VIEW, SEND, READ_HISTORY, MANAGE_CH] })),
+        { id: ids.project, allow: [VIEW, READ_HISTORY], deny: [SEND] },
+    ];
+    if (ids.teamLead)
+        o.push({ id: ids.teamLead, allow: [VIEW, SEND, READ_HISTORY, MANAGE_MSG] });
+    return o;
+}
+/**
+ * Make sure every active project has its voice-activity channel. Runs at
+ * startup so existing projects get one without a full /setup; new projects
+ * get it from buildProject.
+ */
+export async function ensureVoiceActivityChannels(guild) {
+    let created = 0;
+    for (const p of activeProjects()) {
+        const cat = guild.channels.cache.find((c) => c.type === ChannelType.GuildCategory && c.name === p.name.toUpperCase());
+        const projectRole = guild.roles.cache.find((r) => r.name === roleNames.project(p));
+        if (!cat || !projectRole)
+            continue;
+        const name = voiceActivityChannelName(p);
+        if (guild.channels.cache.some((c) => c.type === ChannelType.GuildText && c.name === name && c.parentId === cat.id))
+            continue;
+        const teamLead = guild.roles.cache.find((r) => r.name === roleNames.projectTeamLead(p))?.id;
+        const admins = org.roles.admin
+            .map((a) => guild.roles.cache.find((r) => r.name === roleNames.admin(a))?.id)
+            .filter((x) => !!x);
+        await getOrCreateTextChannel(guild, name, cat, voiceActivityOverwrites(guild, { project: projectRole.id, teamLead, admins }))
+            .then(() => {
+            created++;
+            logger.info({ project: p.key, channel: name }, "Created voice activity channel");
+        })
+            .catch((err) => logger.warn({ err, project: p.key }, "Could not create voice activity channel"));
+    }
+    return created;
+}
 async function buildInformation(guild, roles) {
     const cat = await getOrCreateCategory(guild, org.categories.information.name);
     const internRoleId = roles.get("intern")?.id;
@@ -435,6 +478,7 @@ async function buildProject(guild, roles, p) {
     const cat = await getOrCreateCategory(guild, p.name.toUpperCase(), projectOverwrites);
     await getOrCreateTextChannel(guild, channelNames.projectGeneral(), cat);
     await getOrCreateTextChannel(guild, channelNames.projectAnnouncements(), cat);
+    await getOrCreateTextChannel(guild, voiceActivityChannelName(p), cat, voiceActivityOverwrites(guild, { project: projectRoleId, teamLead: teamLeadId, admins: adminIds }));
     // Per-project support channel: project members see it and open tickets here;
     // tickets are handled by Team Lead and visible to Manager (+ Founder).
     const supportOverwrites = [

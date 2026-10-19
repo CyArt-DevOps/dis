@@ -1,5 +1,6 @@
 import { Events } from "discord.js";
 import { setBotClient } from "./core/botClient.js";
+import { ensureVoiceActivityChannels } from "./services/bootstrap.js";
 import { startWarningSweep, stopWarningSweep, warningAckHandler } from "./services/warnings.js";
 import { voiceSummaryDismissHandler } from "./services/voiceSummary.js";
 import { env } from "./config/env.js";
@@ -87,6 +88,10 @@ async function main() {
         setBotClient(client);
         void reopenActiveSessions(client).then(() => startAttendanceSweep(client));
         startWarningSweep(client);
+        // Every project gets its read-only voice-activity channel (new ones via bootstrap).
+        for (const g of client.guilds.cache.values()) {
+            void ensureVoiceActivityChannels(g).catch((err) => logger.warn({ err }, "Voice activity channel check failed"));
+        }
         void restoreGrants();
         startScheduler(client);
         startMonthlySummary(client);
