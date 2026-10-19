@@ -384,3 +384,33 @@ function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
     </div>
   );
 }
+
+/** Download a file from an HR-signed POST (e.g. the PDF report). */
+export function useHrDownload() {
+  const { withHr } = useHr();
+  return useCallback(
+    (path: string, body: unknown, purpose: string, fallbackName: string) =>
+      withHr(async (token) => {
+        const res = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-HR-Token": token },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string; hrAuth?: boolean };
+          throw new HrError(data.error ?? `Download failed (${res.status})`, Boolean(data.hrAuth));
+        }
+        const blob = await res.blob();
+        const match = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "");
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = match?.[1] ?? fallbackName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      }, purpose),
+    [withHr]
+  );
+}

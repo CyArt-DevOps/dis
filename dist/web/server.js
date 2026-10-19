@@ -10,6 +10,7 @@ import { LeaveInputError, grantManualLeave, revokeManualLeave } from "../service
 import { HolidayInputError, addHoliday, listHolidays, removeHoliday } from "../services/holidays.js";
 import { WarningError, createManualWarning, addWarningNote, dismissWarning, memberWarnings, revokeWarning, listTerminations, listWarnings, runHoursSweep, sendAllProposed, sendWarning, terminateMember, terminationCandidates, } from "../services/warnings.js";
 import { clearCalendarCache } from "../services/calendar.js";
+import { buildMemberReport, reportPeriod, trackedFromOf } from "../services/reportPdf.js";
 import { HrAuthError, activeHrNames, changeOwnPassword, hrName, requireHr, verifyHr } from "../services/hrUsers.js";
 import { clearInsightsCache } from "../services/insights.js";
 import { prisma } from "../core/db.js";
@@ -258,6 +259,27 @@ app.post("/api/warnings/:id/send", jsonBody, sameOrigin, requireHr, action((req)
 app.post("/api/warnings/:id/dismiss", jsonBody, sameOrigin, requireHr, action((req) => dismissWarning(Number(req.params.id), guildOf(req), hrName(req))));
 app.post("/api/warnings/:id/revoke", jsonBody, sameOrigin, requireHr, action((req) => revokeWarning(Number(req.params.id), guildOf(req), hrName(req), req.body?.reason)));
 app.post("/api/warnings/:id/notes", jsonBody, sameOrigin, requireHr, action((req) => addWarningNote(Number(req.params.id), guildOf(req), hrName(req), req.body ?? {})));
+/** Official PDF report on the letterhead, signed off by the verified HR member. */
+app.post("/api/profile/:id/report", jsonBody, sameOrigin, requireHr, async (req, res) => {
+    const userId = String(req.params.id);
+    const b = (req.body ?? {});
+    const kind = b.period === "full" ? "full" : "month";
+    const period = reportPeriod(kind, typeof b.month === "string" ? b.month : undefined, kind === "full" ? await trackedFromOf(guildOf(req), userId) : null);
+    try {
+        const { pdf, filename } = await buildMemberReport(guildOf(req), userId, period, hrName(req));
+        logger.info({ userId, period, hr: hrName(req) }, "Member report generated");
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader("Cache-Control", "no-store");
+        res.send(pdf);
+    }
+    catch (err) {
+        if (err.message === "Member not found.")
+            res.status(404).json({ error: "Member not found." });
+        else
+            throw err;
+    }
+});
 /** Everything on record for one member: warnings, strikes, HR notes. */
 app.get("/api/profile/:id/warnings", async (req, res) => {
     res.json(await memberWarnings(guildOf(req), req.params.id));

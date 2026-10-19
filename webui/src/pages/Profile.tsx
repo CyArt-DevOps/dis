@@ -18,7 +18,7 @@ import { Legend, VIOLATION_META } from "../components/status";
 import { DailyHours, JoinTimeline } from "../components/charts";
 import { LeaveDialog } from "../components/LeaveDialog";
 import { ProfileWarnings } from "../components/ProfileWarnings";
-import { useHrPost } from "../lib/hr";
+import { useHrDownload, useHrPost } from "../lib/hr";
 import {
   Avatar,
   Badge,
@@ -68,6 +68,27 @@ export function ProfilePage({
   const [filter, setFilter] = useState<Filter>("all");
   const [granting, setGranting] = useState(false);
   const hp = useHrPost();
+  const download = useHrDownload();
+  const [reportMenu, setReportMenu] = useState(false);
+  const [reporting, setReporting] = useState(false);
+
+  const getReport = async (period: "month" | "full") => {
+    setReportMenu(false);
+    setReporting(true);
+    try {
+      await download(
+        `/api/profile/${encodeURIComponent(userId)}/report`,
+        { period, month },
+        period === "full" ? "Download the full-internship report" : `Download the ${monthLabel(month)} report`,
+        `CyArt_Report_${userId}.pdf`
+      );
+      flash("good", "Report downloaded.");
+    } catch (e) {
+      flash("bad", (e as Error).message);
+    } finally {
+      setReporting(false);
+    }
+  };
   const [toast, setToast] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
 
   // Every day already covered by an approved leave, so the picker can flag them.
@@ -135,6 +156,24 @@ export function ProfilePage({
           ← Back
         </Button>
         <div className="flex items-center gap-1.5">
+          <div className="relative mr-1">
+            <Button size="sm" disabled={reporting} onClick={() => setReportMenu((v) => !v)}>
+              {reporting ? "Preparing PDF…" : "Download report ▾"}
+            </Button>
+            {reportMenu ? (
+              <div className="absolute right-0 z-30 mt-1.5 w-60 overflow-hidden rounded-xl border border-line-strong bg-panel-2 py-1 shadow-2xl">
+                <button type="button" onClick={() => getReport("month")} className="block w-full px-3.5 py-2 text-left text-sm hover:bg-white/5">
+                  {monthLabel(month)}
+                  <span className="block text-[11px] text-dim">Calendar month shown on this profile</span>
+                </button>
+                <button type="button" onClick={() => getReport("full")} className="block w-full px-3.5 py-2 text-left text-sm hover:bg-white/5">
+                  Full internship
+                  <span className="block text-[11px] text-dim">From tracking start to today</span>
+                </button>
+                <div className="border-t border-line px-3.5 py-2 text-[11px] text-dim">PDF on the CyArt letterhead, signed off by you</div>
+              </div>
+            ) : null}
+          </div>
           <Button size="sm" variant="primary" className="mr-2" onClick={() => setGranting(true)}>
             + Grant leave
           </Button>
