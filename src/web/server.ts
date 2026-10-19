@@ -1,5 +1,6 @@
 import express from "express";
 import { authRoutes } from "./auth.js";
+import { legalRoutes } from "./legal.js";
 import { env } from "../config/env.js";
 import { logger } from "../core/logger.js";
 import { computeAttendance, computeByMember, type AttendanceFilter } from "../services/attendanceStats.js";
@@ -66,6 +67,9 @@ const app = express();
 
 // Only the login form needs a body parser; the rest of the app is read-only.
 app.use(express.urlencoded({ extended: false }));
+// Terms of Service and Privacy Policy are public (Discord app verification needs
+// them); everything else stays behind the password gate below.
+app.use(legalRoutes);
 for (const h of authRoutes()) app.use(h);
 
 function guildOf(req: express.Request): string {

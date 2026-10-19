@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { prisma } from "../core/db.js";
 import { org } from "../config/loader.js";
 import { tzDateKey } from "../lib/time.js";
-import { memberProfile, eachDay, type CalendarDay } from "./calendar.js";
+import { buildCalendars, memberProfile, eachDay, type CalendarDay } from "./calendar.js";
+import { analyse } from "../lib/reportAnalysis.js";
+import { tzDayStartUtc } from "../lib/time.js";
 import { memberInsights, type Violation } from "./insights.js";
 import { memberWarnings, settledThrough } from "./warnings.js";
 import { listHolidays } from "./holidays.js";
@@ -151,6 +153,48 @@ export async function buildMemberReport(
   const mExpected = mStats.present + mStats.late + mStats.absent;
   const mPct = mExpected ? ((mStats.present + mStats.late) / mExpected) * 100 : 0;
   const r = rating(rate, workdays);
+
+  // Peer comparison: everyone in the same project over the same period.
+  let peers: Parameters<typeof analyse>[0]["peers"] = null;
+  if (m.project) {
+    const cals = await buildCalendars(guildId, { project: m.project }, period.from, to);
+    const scored = cals
+      .map((c) => {
+        const ds = c.days.filter((d) => d.day <= settledDay);
+        const g = ds.filter((d) => d.status === "good").length;
+        const w = ds.filter((d) => d.status === "good" || d.status === "partial" || d.status === "missing").length;
+        const present = ds.filter((d) => d.seconds > 0);
+        return { id: c.userId, rate: w ? (g / w) * 100 : 0, w, secs: present.reduce((a, d) => a + d.seconds, 0), present: present.length };
+      })
+      .filter((x) => x.w > 0);
+    if (scored.length > 1) {
+      const sorted = [...scored].sort((a, b) => a.rate - b.rate);
+      const idx = sorted.findIndex((x) => x.id === userId);
+      const totalPresent = scored.reduce((a, x) => a + x.present, 0);
+      peers = {
+        memberRate: rate,
+        projectRate: scored.reduce((a, x) => a + x.rate, 0) / scored.length,
+        projectAvgSeconds: totalPresent ? scored.reduce((a, x) => a + x.secs, 0) / totalPresent : 0,
+        percentile: idx < 0 ? 50 : Math.round(((idx + 1) / sorted.length) * 100),
+        project: m.project,
+        size: scored.length,
+      };
+    }
+  }
+  const loginByMin = Number(p.loginBy.split(":")[0]) * 60 + Number(p.loginBy.split(":")[1]);
+  const analysis = analyse({
+    days: settled.map((d) => ({
+      day: d.day,
+      status: d.status,
+      seconds: d.seconds,
+      firstJoinMin: d.firstJoinAt ? Math.round((d.firstJoinAt.getTime() - tzDayStartUtc(d.day).getTime()) / 60_000) : null,
+      onTime: d.onTime,
+    })),
+    requiredSeconds: required,
+    loginByMin,
+    name: m.fullName.split(" ")[0]!,
+    peers,
+  });
   const reportId = `CY-${userId.slice(-6)}-${today.replace(/-/g, "")}`;
 
   // ------------------------------------------------------------ document
@@ -191,9 +235,13 @@ export async function buildMemberReport(
     ensure(48 + keep);
     doc.moveDown(0.6);
     const y = doc.y;
-    doc.rect(L, y + 2, 3, 13).fill(C.orange);
-    doc.fillColor(C.ink).font("Helvetica-Bold").fontSize(12.5).text(title, L + 10, y, { width: CW - 10 });
-    if (sub) doc.fillColor(C.muted).font("Helvetica").fontSize(8.5).text(sub, L + 10, doc.y + 1, { width: CW - 10 });
+    // Heading: title with a short two-tone underline (brand orange + green).
+    doc.fillColor(C.ink).font("Helvetica-Bold").fontSize(12.5).text(title, L, y, { width: CW });
+    const uy = doc.y + 2;
+    doc.rect(L, uy, 18, 2).fill(C.orange);
+    doc.rect(L + 20, uy, 8, 2).fill(C.green);
+    doc.y = uy + 5;
+    if (sub) doc.fillColor(C.muted).font("Helvetica").fontSize(8.5).text(sub, L, doc.y, { width: CW });
     doc.moveDown(0.5);
     doc.x = L;
   };
@@ -368,6 +416,87 @@ export async function buildMemberReport(
     doc.fillColor(C.ink).font("Helvetica-Bold").fontSize(10).text("Recommendations", L, doc.y);
     doc.moveDown(0.3);
     for (const rc of recs) bullet(rc, C.green);
+  }
+
+  // ------------------------------------------------------------ detailed analysis (written)
+  doc.addPage();
+  sectionTitle("Detailed analysis", "Findings computed from this member's daily attendance records for the period.");
+  for (const para2 of analysis.paragraphs) {
+    ensure(40);
+    doc.fillColor(C.ink).font("Helvetica-Bold").fontSize(10).text(para2.title, L, doc.y);
+    doc.moveDown(0.2);
+    para(para2.body);
+  }
+
+  if (analysis.weeks.length) {
+    sectionTitle("Week by week", "Working days, verdicts and voice time for each week of the period.", 60);
+    table(
+      [
+        { label: "Week of", w: 90 },
+        { label: "Compliance", w: 70, align: "right" },
+        { label: "Days", w: 50, align: "right" },
+        { label: "Completed", w: 65, align: "right" },
+        { label: "Partial", w: 55, align: "right" },
+        { label: "Absent", w: 55, align: "right" },
+        { label: "Leave", w: 45, align: "right" },
+        { label: "Voice", w: 70, align: "right" },
+      ],
+      analysis.weeks.map((w) => [
+        fmtDay(w.weekOf, { day: "2-digit", month: "short" }),
+        w.workdays ? pct(w.rate) : "-",
+        String(w.workdays),
+        String(w.good),
+        String(w.partial),
+        String(w.absent),
+        String(w.leave),
+        hm(w.seconds),
+      ]),
+      analysis.weeks.map((w) => (!w.workdays ? C.muted : w.rate >= 75 ? C.green : w.rate >= 50 ? C.partial : C.absent))
+    );
+  }
+
+  if (analysis.weekdays.some((w) => w.workdays)) {
+    sectionTitle("Weekday pattern", "Absences, short days and late logins by day of the week.", 120);
+    const ch = 80;
+    const y0 = doc.y + 4;
+    const colW = CW / 5;
+    const maxV = Math.max(1, ...analysis.weekdays.map((w) => w.absent + w.short + w.late));
+    analysis.weekdays.forEach((w, i) => {
+      const x = L + i * colW + colW * 0.3;
+      const bw = colW * 0.4;
+      let yTop = y0 + ch;
+      for (const [v, color] of [
+        [w.absent, C.absent],
+        [w.short, C.partial],
+        [w.late, "#eab308"],
+      ] as const) {
+        if (!v) continue;
+        const h = (v / maxV) * ch;
+        yTop -= h;
+        doc.rect(x, yTop, bw, h).fill(color);
+      }
+      if (!w.absent && !w.short && !w.late) doc.rect(x, y0 + ch - 2, bw, 2).fill(C.good);
+      doc.fillColor(C.ink).font("Helvetica-Bold").fontSize(8).text(w.weekday.slice(0, 3), L + i * colW, y0 + ch + 4, { width: colW, align: "center" });
+      doc.fillColor(C.muted).font("Helvetica").fontSize(7).text(
+        w.workdays ? `${w.absent}A · ${w.short}S · ${w.late}L of ${w.workdays}` : "no working days",
+        L + i * colW,
+        y0 + ch + 15,
+        { width: colW, align: "center" }
+      );
+    });
+    doc.y = y0 + ch + 30;
+    let lx = L;
+    for (const [lbl, color] of [
+      ["Absent (A)", C.absent],
+      ["Short hours (S)", C.partial],
+      ["Late login (L)", "#eab308"],
+    ] as const) {
+      doc.roundedRect(lx, doc.y + 1, 8, 8, 2).fill(color);
+      doc.fillColor(C.text).font("Helvetica").fontSize(8).text(lbl, lx + 11, doc.y, { lineBreak: false });
+      lx += 11 + doc.widthOfString(lbl) + 16;
+    }
+    doc.y += 16;
+    doc.x = L;
   }
 
   // ------------------------------------------------------------ infographics
@@ -640,21 +769,32 @@ export async function buildMemberReport(
     );
   }
 
+  // Conclusion (kept on the same page as the sign-off block)
+  sectionTitle("Conclusion and HR assessment", undefined, 200);
+  {
+    const y = doc.y;
+    doc.font("Helvetica").fontSize(9.5);
+    const h = doc.heightOfString(analysis.conclusion, { width: CW - 24, lineGap: 2 }) + 16;
+    ensure(h);
+    doc.roundedRect(L, doc.y, CW, h, 6).fill(C.panel);
+    doc.rect(L, doc.y, 3, h).fill(r.color);
+    doc.fillColor(C.ink).font("Helvetica").fontSize(9.5).text(analysis.conclusion, L + 14, doc.y + 8, { width: CW - 24, lineGap: 2 });
+    doc.y = Math.max(doc.y, y) + 10;
+    doc.x = L;
+  }
+
   // Sign-off
   ensure(110);
   doc.moveDown(1.2);
   const sy = doc.y;
   doc.moveTo(L, sy).lineTo(R, sy).lineWidth(0.5).strokeColor(C.line).stroke();
-  doc.fillColor(C.ink).font("Helvetica-Bold").fontSize(10).text("Prepared by", L, sy + 12);
-  doc.fillColor(C.text).font("Helvetica").fontSize(10).text(preparedBy, L, sy + 27);
-  doc.fillColor(C.muted).fontSize(8.5).text("Human Resources, CyArt", L, sy + 41);
-  doc.fillColor(C.muted).fontSize(8.5).text(`Date: ${fmtDay(today)}`, L, sy + 54);
-  doc.moveTo(R - 170, sy + 52).lineTo(R, sy + 52).lineWidth(0.6).strokeColor(C.faint).stroke();
-  doc.fillColor(C.muted).fontSize(8).text("Authorised signature", R - 170, sy + 56, { width: 170, align: "center" });
+  doc.fillColor(C.ink).font("Helvetica-Bold").fontSize(10).text("Generated by", L, sy + 12);
+  doc.fillColor(C.text).font("Helvetica").fontSize(10).text(`${preparedBy}, Human Resources, CyArt`, L, sy + 27);
+  doc.fillColor(C.muted).fontSize(8.5).text(`Date: ${fmtDay(today)}  |  Report ID: ${reportId}`, L, sy + 41);
   doc.fillColor(C.faint).fontSize(7.5).text(
-    `This report is generated from CyArt's attendance system (voice presence, leave and meeting records) and verified by ${preparedBy}. Report ID ${reportId}.`,
+    "This is a computer-generated report and does not require a signature. It is produced from CyArt's attendance system (voice presence, leave and meeting records) at the request of the HR member named above.",
     L,
-    sy + 80,
+    sy + 60,
     { width: CW }
   );
 
@@ -667,7 +807,7 @@ export async function buildMemberReport(
     const fy = doc.page.height - 36;
     doc.moveTo(L, fy - 6).lineTo(R, fy - 6).lineWidth(0.4).strokeColor(C.line).stroke();
     doc.fillColor(C.faint).font("Helvetica").fontSize(7.5);
-    doc.text(`Confidential - ${m.fullName} - ${period.label}`, L, fy, { width: CW / 2, lineBreak: false });
+    doc.text(`${m.fullName} - ${period.label} - ${reportId}`, L, fy, { width: CW / 2, lineBreak: false });
     doc.text(`Page ${i - range.start + 1} of ${range.count}`, L + CW / 2, fy, { width: CW / 2, align: "right", lineBreak: false });
   }
   doc.end();
