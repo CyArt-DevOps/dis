@@ -6,48 +6,30 @@ import {
   EmbedBuilder,
   MessageFlags,
   PermissionFlagsBits,
+  SlashCommandBuilder,
   type Guild,
   type Interaction,
   type TextChannel,
 } from "discord.js";
 import { prisma } from "../core/db.js";
-import { org } from "../config/loader.js";
+import { org, activeProjects } from "../config/loader.js";
 import { logger } from "../core/logger.js";
-import { botGuild } from "../core/botClient.js";
 import { shiftDayKey, tzDateKey, tzDayStartUtc } from "../lib/time.js";
 import { holidayMap, isWorkingDay } from "./holidays.js";
-import { channelNames } from "../lib/names.js";
-import type { InteractionHandler } from "../core/registry.js";
+import { pendingOpenSeconds } from "./attendance.js";
+import type { InteractionHandler, SlashCommand } from "../core/registry.js";
 
 /**
- * The project's read-only voice-activity channel, the ONLY place summaries go
- * (never #general, pod or module chats). Null if the project has none yet.
- */
-export function voiceActivityChannel(guild: Guild, projectName: string | null): TextChannel | null {
-  const project = org.projects.find((p) => p.name === projectName);
-  if (!project) return null;
-  const cat = guild.channels.cache.find(
-    (x) => x.type === ChannelType.GuildCategory && x.name === project.name.toUpperCase()
-  );
-  if (!cat) return null;
-  const ch = guild.channels.cache.find(
-    (x) => x.type === ChannelType.GuildText && x.parentId === cat.id && x.name === channelNames.voiceActivity(project.key)
-  ) as TextChannel | undefined;
-  const me = guild.members.me;
-  if (!ch || (me && !ch.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]))) return null;
-  return ch;
-}
-
-/**
- * When a member leaves voice, tell them in their project's voice-activity channel how much
- * time they have served today — no command needed. Posting waits a short delay
- * so a quick reconnect doesn't spam, replaces that member's previous summary,
- * and removes itself after a while; the member can dismiss it sooner.
+ * "How many hours have I served today?", answered privately.
+ *
+ * Discord only allows a message visible to one person ("Only you can see
+ * this") as the reply to that person's own interaction, so a summary can't be
+ * pushed when someone leaves voice. Instead members ask: `/hours` anywhere, or
+ * the "Check my hours" button on a panel in their project's #general. Nothing
+ * is ever posted publicly and no extra channels are created.
  */
 
-const DISMISS_PREFIX = "vcsum:dismiss:";
-const timers = new Map<string, NodeJS.Timeout>();
-const lastPosted = new Map<string, { channelId: string; messageId: string }>();
+const CHECK_ID = "hours:check";
 
 function hm(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
@@ -70,25 +52,6 @@ function bar(fraction: number): string {
   return "▰".repeat(filled) + "▱".repeat(n - filled);
 }
 
-export function cancelVoiceSummary(userId: string): void {
-  const t = timers.get(userId);
-  if (t) clearTimeout(t);
-  timers.delete(userId);
-}
-
-export function scheduleVoiceSummary(guildId: string, userId: string): void {
-  if (!org.voiceSummary.enabled) return;
-  cancelVoiceSummary(userId);
-  const t = setTimeout(() => {
-    timers.delete(userId);
-    void postSummary(guildId, userId).catch((err) =>
-      logger.warn({ err, userId }, "Voice summary post failed")
-    );
-  }, org.voiceSummary.delaySeconds * 1000);
-  t.unref?.();
-  timers.set(userId, t);
-}
-
 /** Most specific text channel the bot can post in: pod → module → module info → project general. */
 export function memberChannel(
   guild: Guild,
@@ -109,37 +72,31 @@ export function memberChannel(
       | undefined;
     if (c && canPost(c)) return c;
   }
+  const general = projectGeneral(guild, project.name);
+  return general && canPost(general) ? general : null;
+}
+
+function projectGeneral(guild: Guild, projectName: string): TextChannel | undefined {
   const cat = guild.channels.cache.find(
-    (x) => x.type === ChannelType.GuildCategory && x.name === project.name.toUpperCase()
+    (x) => x.type === ChannelType.GuildCategory && x.name === projectName.toUpperCase()
   );
-  const general = cat
+  return cat
     ? (guild.channels.cache.find(
         (x) => x.type === ChannelType.GuildText && x.parentId === cat.id && x.name === "general"
       ) as TextChannel | undefined)
     : undefined;
-  return general && canPost(general) ? general : null;
 }
 
-async function postSummary(guildId: string, userId: string): Promise<void> {
-  const guild = botGuild(guildId);
-  if (!guild) return;
-  const discordMember = await guild.members.fetch(userId).catch(() => null);
-  if (!discordMember || discordMember.user.bot) return;
-  if (discordMember.voice.channelId) return; // rejoined during the delay
-
-  const m = await prisma.member.findUnique({
-    where: { id: userId },
-    select: { project: true, module: true, pod: true },
-  });
-  if (!m?.project) return;
-  // Only the project's voice-activity channel; no fallback to other channels.
-  const channel = voiceActivityChannel(guild, m.project);
-  if (!channel) return;
-
+/** Today's voice summary for one member, including time in a session still open. */
+export async function hoursEmbed(
+  guildId: string,
+  userId: string,
+  who: { name: string; avatar?: string }
+): Promise<EmbedBuilder> {
   const p = org.attendancePolicy;
   const today = tzDateKey(new Date());
   const required = Math.round(p.minHours * 3600);
-  const [row, first, holidays] = await Promise.all([
+  const [row, first, holidays, pending, live] = await Promise.all([
     prisma.attendance.findFirst({ where: { guildId, userId, day: today }, select: { seconds: true } }),
     prisma.voiceSession.findFirst({
       where: {
@@ -152,8 +109,10 @@ async function postSummary(guildId: string, userId: string): Promise<void> {
       select: { joinedAt: true },
     }),
     holidayMap(guildId),
+    pendingOpenSeconds(guildId, userId),
+    prisma.voiceSession.findFirst({ where: { guildId, userId, leftAt: null }, select: { id: true } }),
   ]);
-  const served = row?.seconds ?? 0;
+  const served = (row?.seconds ?? 0) + (pending.get(userId)?.get(today) ?? 0);
   const firstJoin = first ? (first.joinedAt < tzDayStartUtc(today) ? tzDayStartUtc(today) : first.joinedAt) : null;
   const working = isWorkingDay(today, holidays);
   const cutoff = localTimeOn(today, p.loginBy);
@@ -169,80 +128,102 @@ async function postSummary(guildId: string, userId: string): Promise<void> {
   } else if (served >= required) {
     verdict = lateBy ? `✅ Daily ${p.minHours}h target met, but your first join was **${lateBy} min late**.` : `✅ Daily ${p.minHours}h target met. Thank you!`;
     color = lateBy ? 0xfbbf24 : 0x34d399;
+  } else if (!firstJoin) {
+    verdict = `You haven't joined voice today. Join by **${p.loginBy}** and serve **${p.minHours}h** before ${p.windowEnd}.`;
+    color = new Date() < cutoff ? 0x71717a : 0xfb7185;
   } else if (new Date() < windowEnd) {
-    verdict = `⏳ **${hm(required - served)}** still to go today. Rejoin before ${p.windowEnd} to complete ${p.minHours}h.`;
+    verdict = `⏳ **${hm(required - served)}** still to go today. ${live ? "Stay connected" : `Rejoin before ${p.windowEnd}`} to complete ${p.minHours}h.`;
     color = 0xfbbf24;
   } else {
     verdict = `⚠️ Short by **${hm(required - served)}** today. Two short days in a row lead to a formal warning.`;
     color = 0xfb7185;
   }
 
-  const embed = new EmbedBuilder()
+  return new EmbedBuilder()
     .setColor(color)
-    .setAuthor({ name: discordMember.displayName, iconURL: discordMember.displayAvatarURL() })
-    .setTitle("Voice session ended")
+    .setAuthor({ name: who.name, iconURL: who.avatar })
+    .setTitle(live ? "Your voice hours today (in voice now)" : "Your voice hours today")
     .setDescription(
       [
         `You have served **${hm(served)}** today${working ? ` of **${hm(required)}**` : ""}.`,
         working ? `\`${bar(served / required)}\` ${Math.min(100, Math.round((served / required) * 100))}%` : null,
-        firstJoin ? `First join: **${clock(today, firstJoin)}**${working ? (lateBy ? ` (late by ${lateBy} min, cutoff ${p.loginBy})` : " (on time)") : ""}` : null,
+        firstJoin
+          ? `First join: **${clock(today, firstJoin)}**${working ? (lateBy ? ` (late by ${lateBy} min, cutoff ${p.loginBy})` : " (on time)") : ""}`
+          : null,
         "",
         verdict,
       ]
         .filter((l) => l !== null)
         .join("\n")
     )
-    .setFooter({
-      text:
-        org.voiceSummary.deleteAfterMinutes > 0
-          ? `Disappears in ${org.voiceSummary.deleteAfterMinutes} min · only you can dismiss it`
-          : "Only you can dismiss this",
-    })
+    .setFooter({ text: "Only you can see this" })
     .setTimestamp(new Date());
-
-  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`${DISMISS_PREFIX}${userId}`).setLabel("Dismiss").setStyle(ButtonStyle.Secondary)
-  );
-
-  // One live summary per member: replace the previous one.
-  const prev = lastPosted.get(userId);
-  if (prev) {
-    const prevChannel = guild.channels.cache.get(prev.channelId);
-    if (prevChannel?.isTextBased()) await prevChannel.messages.delete(prev.messageId).catch(() => {});
-  }
-
-  const msg = await channel.send({
-    content: `<@${userId}>`,
-    embeds: [embed],
-    components: [row2],
-    allowedMentions: { users: [userId] },
-  });
-  lastPosted.set(userId, { channelId: channel.id, messageId: msg.id });
-
-  const after = org.voiceSummary.deleteAfterMinutes;
-  if (after > 0) {
-    const t = setTimeout(() => {
-      void msg.delete().catch(() => {});
-      if (lastPosted.get(userId)?.messageId === msg.id) lastPosted.delete(userId);
-    }, after * 60_000);
-    t.unref?.();
-  }
 }
 
-/** "Dismiss" on a summary: the member it's for (or staff who can manage messages). */
-export const voiceSummaryDismissHandler: InteractionHandler = {
-  id: "voice-summary-dismiss",
-  matches: (i: Interaction) => i.isButton() && i.customId.startsWith(DISMISS_PREFIX),
-  async handle(i: Interaction) {
-    if (!i.isButton()) return;
-    const owner = i.customId.slice(DISMISS_PREFIX.length);
-    const staff = i.memberPermissions?.has(PermissionFlagsBits.ManageMessages) ?? false;
-    if (i.user.id !== owner && !staff) {
-      await i.reply({ content: "Only the member this summary is for can dismiss it.", flags: MessageFlags.Ephemeral });
-      return;
-    }
-    await i.deferUpdate();
-    await i.message.delete().catch(() => {});
-    if (lastPosted.get(owner)?.messageId === i.message.id) lastPosted.delete(owner);
+async function replyHours(i: Interaction): Promise<void> {
+  if (!i.isRepliable() || !i.guildId) return;
+  const name = (i.member && "displayName" in i.member ? i.member.displayName : null) ?? i.user.globalName ?? i.user.username;
+  const embed = await hoursEmbed(i.guildId, i.user.id, { name, avatar: i.user.displayAvatarURL() });
+  if (i.deferred || i.replied) await i.editReply({ embeds: [embed] });
+  else await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+}
+
+/** `/hours`: today's served time, visible only to the member who asked. */
+export const hoursCommand: SlashCommand = {
+  data: new SlashCommandBuilder().setName("hours").setDescription("See how many hours you've served in voice today (only you can see it)"),
+  async execute(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await replyHours(interaction);
   },
 };
+
+/** The "Check my hours" button on the #general panels. */
+export const hoursButtonHandler: InteractionHandler = {
+  id: "hours-check",
+  ack: "reply",
+  matches: (i: Interaction) => i.isButton() && i.customId === CHECK_ID,
+  handle: replyHours,
+};
+
+/**
+ * One "Check my hours" panel in each active project's #general. Idempotent:
+ * skipped where the bot's panel is already among recent messages.
+ */
+export async function ensureHoursPanels(guild: Guild): Promise<number> {
+  let posted = 0;
+  for (const p of activeProjects()) {
+    const general = projectGeneral(guild, p.name);
+    if (!general) continue;
+    const me = guild.members.me;
+    if (me && !general.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) continue;
+    const recent = await general.messages.fetch({ limit: 50 }).catch(() => null);
+    const exists = recent?.some(
+      (msg) =>
+        msg.author.id === guild.client.user.id &&
+        msg.components.some((r) => "components" in r && r.components.some((c) => "customId" in c && c.customId === CHECK_ID))
+    );
+    if (exists) continue;
+    await general
+      .send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x5865f2)
+            .setTitle("Check your voice hours")
+            .setDescription(
+              `Press the button (or type **/hours** anywhere) to see how long you've served in voice today, your first-join time and what's left of the ${org.attendancePolicy.minHours}h target.\n\nThe reply is private: only you can see it.`
+            ),
+        ],
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(CHECK_ID).setLabel("Check my hours").setEmoji("⏱️").setStyle(ButtonStyle.Primary)
+          ),
+        ],
+      })
+      .then(() => {
+        posted++;
+      })
+      .catch((err) => logger.warn({ err, project: p.key }, "Could not post hours panel"));
+  }
+  if (posted) logger.info({ posted }, "Posted Check-my-hours panels");
+  return posted;
+}

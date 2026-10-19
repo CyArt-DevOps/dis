@@ -64,7 +64,7 @@ export async function voiceByMember(range: VoiceRange): Promise<VoiceMemberRow[]
     }),
     pendingByUser(guildId),
     prisma.member.findMany({
-      where: { guildId },
+      where: { guildId, status: { not: "former" } },
       select: {
         id: true,
         fullName: true,
@@ -279,7 +279,7 @@ export async function complianceForDay(
 
   const [members, attendance, sessions, lastSessions] = await Promise.all([
     prisma.member.findMany({
-      where: { guildId },
+      where: { guildId, status: { not: "former" } },
       select: {
         id: true,
         fullName: true,

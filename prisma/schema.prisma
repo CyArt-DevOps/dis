@@ -26,6 +26,10 @@ model Member {
   registrationDate DateTime?
   verificationStatus String @default("pending") // pending | verified
   flagged   Boolean @default(false) // possible duplicate name, for HR review
+  // active | former (removed from the server; kept for records and reports)
+  status    String   @default("active") @db.VarChar(16)
+  formerAt  DateTime?
+  formerReason String? @db.Text
   joinedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 

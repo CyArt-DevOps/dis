@@ -34,7 +34,7 @@ export async function voiceByMember(range) {
         }),
         pendingByUser(guildId),
         prisma.member.findMany({
-            where: { guildId },
+            where: { guildId, status: { not: "former" } },
             select: {
                 id: true,
                 fullName: true,
@@ -173,7 +173,7 @@ export async function complianceForDay(guildId, day) {
     const untracked = Boolean(policy.trackingStartsOn && day < policy.trackingStartsOn);
     const [members, attendance, sessions, lastSessions] = await Promise.all([
         prisma.member.findMany({
-            where: { guildId },
+            where: { guildId, status: { not: "former" } },
             select: {
                 id: true,
                 fullName: true,

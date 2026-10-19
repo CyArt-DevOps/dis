@@ -25,6 +25,8 @@ export async function membersInScope(guildId, scope) {
     const where = { guildId };
     if (scope.userId)
         where.id = scope.userId;
+    else
+        where.status = { not: "former" }; // former interns: profile only, never in group stats
     if (scope.batch)
         where.batch = scope.batch;
     if (scope.project)
@@ -367,6 +369,9 @@ export async function memberProfile(guildId, userId, from, to) {
                 pod: member.pod,
                 verificationStatus: member.verificationStatus,
                 joinedAt: member.joinedAt,
+                status: member.status,
+                formerAt: member.formerAt,
+                formerReason: member.formerReason,
             }
             : null,
         calendar: calendars,

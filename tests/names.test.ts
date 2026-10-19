@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { channelNames, moduleLabel, moduleShort, roleNames } from "../src/lib/names.js";
+import { moduleLabel, moduleShort, roleNames } from "../src/lib/names.js";
 import type { ProjectDef } from "../src/config/loader.js";
 
 const plain: ProjectDef = {
@@ -40,9 +40,3 @@ describe("module naming", () => {
   });
 });
 
-describe("voice activity channel name", () => {
-  it("is one per project, keyed by the stable project key", () => {
-    expect(channelNames.voiceActivity("darktrace")).toBe("darktrace-voice-activity");
-    expect(channelNames.voiceActivity("chain-discovery")).toBe("chain-discovery-voice-activity");
-  });
-});

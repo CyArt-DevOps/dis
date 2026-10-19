@@ -187,6 +187,14 @@ export function ProfilePage({
         </div>
       </div>
 
+      {m.status === "former" ? (
+        <div className="rounded-2xl border border-rose-400/25 bg-rose-400/5 px-5 py-3 text-sm text-rose-200">
+          <b className="font-semibold">Former Intern</b>
+          {m.formerAt ? ` since ${dateOf(m.formerAt)}` : ""}
+          {m.formerReason ? `: ${m.formerReason}` : ""}. Records are kept for reference; this member no longer counts in attendance or warnings.
+        </div>
+      ) : null}
+
       {/* Identity */}
       <Card className="relative overflow-hidden">
         <div className="bg-grid pointer-events-none absolute inset-x-0 top-0 h-40" />
@@ -195,7 +203,9 @@ export function ProfilePage({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-gradient text-2xl font-semibold tracking-tight sm:text-3xl">{m.fullName}</h1>
-              {data.live ? (
+              {m.status === "former" ? (
+                <Badge tone="bad">Former Intern</Badge>
+              ) : data.live ? (
                 <Badge tone="good" dot>
                   In voice now
                 </Badge>

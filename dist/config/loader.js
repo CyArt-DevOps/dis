@@ -101,7 +101,15 @@ const orgSchema = z.object({
         startsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     })
         .default({}),
-    /** Post "you served Xh Ym today" in the member's channel when they leave VC. */
+    /** Daily voice-hours list in pod / module / project chats. */
+    hoursDigest: z
+        .object({
+        enabled: z.boolean().default(true),
+        // Org-time HH:MM to post each working day.
+        time: z.string().regex(/^\d{1,2}:\d{2}$/).default("17:50"),
+    })
+        .default({}),
+    /** Legacy per-session summary settings (no longer used; kept so old configs parse). */
     voiceSummary: z
         .object({
         enabled: z.boolean().default(true),

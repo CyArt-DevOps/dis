@@ -169,6 +169,9 @@ export interface Profile {
     pod: number | null;
     verificationStatus: string;
     joinedAt: string;
+    status?: string;
+    formerAt?: string | null;
+    formerReason?: string | null;
   } | null;
   calendar: MemberCalendar | null;
   live: boolean;

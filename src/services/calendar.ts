@@ -74,6 +74,7 @@ export function eachDay(from: string, to: string): string[] {
 export async function membersInScope(guildId: string, scope: MemberScope) {
   const where: Record<string, unknown> = { guildId };
   if (scope.userId) where.id = scope.userId;
+  else where.status = { not: "former" }; // former interns: profile only, never in group stats
   if (scope.batch) where.batch = scope.batch;
   if (scope.project) where.project = scope.project;
   if (scope.module !== undefined) where.module = scope.module;
@@ -413,6 +414,9 @@ export interface MemberProfile {
     pod: number | null;
     verificationStatus: string;
     joinedAt: Date;
+    status: string;
+    formerAt: Date | null;
+    formerReason: string | null;
   } | null;
   calendar: MemberCalendar | null;
   live: boolean;
@@ -496,6 +500,9 @@ export async function memberProfile(
           pod: member.pod,
           verificationStatus: member.verificationStatus,
           joinedAt: member.joinedAt,
+          status: member.status,
+          formerAt: member.formerAt,
+          formerReason: member.formerReason,
         }
       : null,
     calendar: calendars,
