@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { moduleLabel, moduleShort, roleNames } from "../src/lib/names.js";
+import { moduleLabel, moduleShort, roleNames, placeNames } from "../src/lib/names.js";
 import type { ProjectDef } from "../src/config/loader.js";
 
 const plain: ProjectDef = {
@@ -40,3 +40,16 @@ describe("module naming", () => {
   });
 });
 
+
+describe("placeNames (what bootstrap creates)", () => {
+  it("names the project/module categories and every VC kind", () => {
+    expect(placeNames.projectCategory(named)).toBe("CYBREACH");
+    expect(placeNames.moduleCategory(named, 2)).toBe("CyBreach M2");
+    expect(placeNames.moduleCategory(named, 5)).toBe("CyBreach Team Velocity");
+    expect(placeNames.projectGeneralVc(named)).toBe("CyBreach General VC");
+    expect(placeNames.leadershipVc(named)).toBe("CyBreach Leadership VC");
+    expect(placeNames.moduleVc(named, 2)).toBe("CyBreach M2 VC");
+    expect(placeNames.podVc(named, 2, 3)).toBe("CyBreach M2 P3 VC");
+    expect(placeNames.podVc(named, 5, 1)).toBe("CyBreach Team Velocity P1 VC");
+  });
+});

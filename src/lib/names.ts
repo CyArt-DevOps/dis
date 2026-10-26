@@ -35,3 +35,17 @@ export const channelNames = {
   projectGeneral: () => "general",
   projectAnnouncements: () => "announcements",
 };
+
+/**
+ * Category and voice-channel names exactly as bootstrap creates them. The
+ * assigned-VC resolver (services/assignedVoice.ts) finds a member's channels by
+ * these names + parent category, so bootstrap must use this too.
+ */
+export const placeNames = {
+  projectCategory: (p: ProjectDef) => p.name.toUpperCase(),
+  moduleCategory: (p: ProjectDef, mod: number) => `${p.name} ${moduleShort(p, mod)}`,
+  projectGeneralVc: (p: ProjectDef) => `${p.name} General VC`,
+  leadershipVc: (p: ProjectDef) => `${p.name} ${channelNames.leadershipVc()}`,
+  moduleVc: (p: ProjectDef, mod: number) => `${p.name} ${moduleShort(p, mod)} VC`,
+  podVc: (p: ProjectDef, mod: number, pod: number) => `${p.name} ${moduleShort(p, mod)} P${pod} VC`,
+};

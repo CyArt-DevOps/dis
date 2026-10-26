@@ -17,7 +17,7 @@ import {
 import { activeProjects, org, type ProjectDef } from "../config/loader.js";
 import { logger } from "../core/logger.js";
 import { readState, updateState } from "../core/state.js";
-import { roleNames, channelNames, moduleShort } from "../lib/names.js";
+import { roleNames, channelNames, placeNames } from "../lib/names.js";
 import { beginButton, IDS as ONBOARD_IDS } from "./onboarding.js";
 import { LEAVE_IDS, leavePanelButton, leavePanelEmbed } from "./leave.js";
 import {
@@ -556,7 +556,7 @@ async function buildProject(guild: Guild, roles: RoleMap, p: ProjectDef) {
       allow: [VIEW, SEND, CONNECT, SPEAK, MANAGE_CH],
     });
 
-  const cat = await getOrCreateCategory(guild, p.name.toUpperCase(), projectOverwrites);
+  const cat = await getOrCreateCategory(guild, placeNames.projectCategory(p), projectOverwrites);
   await getOrCreateTextChannel(guild, channelNames.projectGeneral(), cat);
   await getOrCreateTextChannel(guild, channelNames.projectAnnouncements(), cat);
 
@@ -594,7 +594,7 @@ async function buildProject(guild: Guild, roles: RoleMap, p: ProjectDef) {
   ];
   if (teamLeadId)
     projectVcOverwrites.push({ id: teamLeadId, allow: [VIEW, CONNECT, SPEAK, MANAGE_CH] });
-  await getOrCreateVoiceChannel(guild, `${p.name} General VC`, cat, projectVcOverwrites);
+  await getOrCreateVoiceChannel(guild, placeNames.projectGeneralVc(p), cat, projectVcOverwrites);
 
   // Leadership sub-area: build as channels under same category (Discord has no nested categories)
   const leadershipOverwrites: OverwriteResolvable[] = [
@@ -626,7 +626,7 @@ async function buildProject(guild: Guild, roles: RoleMap, p: ProjectDef) {
   );
   await getOrCreateVoiceChannel(
     guild,
-    `${p.name} ${channelNames.leadershipVc()}`,
+    placeNames.leadershipVc(p),
     cat,
     leadershipOverwrites
   );
@@ -649,7 +649,7 @@ async function buildProject(guild: Guild, roles: RoleMap, p: ProjectDef) {
 
     const modCat = await getOrCreateCategory(
       guild,
-      `${p.name} ${moduleShort(p, m)}`,
+      placeNames.moduleCategory(p, m),
       modOverwrites
     );
 
@@ -715,7 +715,7 @@ async function buildProject(guild: Guild, roles: RoleMap, p: ProjectDef) {
 
       await getOrCreateVoiceChannel(
         guild,
-        `${p.name} ${moduleShort(p, m)} VC`,
+        placeNames.moduleVc(p, m),
         modCat,
         moduleChanOverwrites
       );
@@ -753,7 +753,7 @@ async function buildProject(guild: Guild, roles: RoleMap, p: ProjectDef) {
       );
       await getOrCreateVoiceChannel(
         guild,
-        `${p.name} ${moduleShort(p, m)} P${pd} VC`,
+        placeNames.podVc(p, m, pd),
         modCat,
         podOverwrites
       );
