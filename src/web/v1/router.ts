@@ -4,6 +4,7 @@ import { org } from "../../config/loader.js";
 import { prisma } from "../../core/db.js";
 import { botGuild } from "../../core/botClient.js";
 import { apiKeyGuard } from "./apiKey.js";
+import { membersReady } from "../../services/memberCache.js";
 import { leadershipFromRoleNames, memberDto, orgDto, projectKeyOf } from "../../services/integrationPayloads.js";
 
 /**
@@ -31,6 +32,10 @@ v1Router.get("/members", async (req, res) => {
   const guild = botGuild(env.DISCORD_GUILD_ID);
   if (!guild) {
     res.status(503).json({ error: "bot offline — leadership unknown" });
+    return;
+  }
+  if (!membersReady()) {
+    res.status(503).json({ error: "member cache warming" });
     return;
   }
   const rows = await prisma.member.findMany({

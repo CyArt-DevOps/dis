@@ -6,6 +6,8 @@ import type { AddressInfo } from "node:net";
 const KEY = "k".repeat(40);
 vi.mock("../src/config/env.js", () => ({ env: { DIS_API_KEY: "k".repeat(40), DISCORD_GUILD_ID: "g1" } }));
 
+vi.mock("../src/core/logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn() } }));
+
 const memberFindMany = vi.fn();
 const attendanceFindMany = vi.fn();
 vi.mock("../src/core/db.js", () => ({
@@ -19,6 +21,7 @@ vi.mock("../src/config/loader.js", () => ({
   org: { projects: [{ key: "alpha", name: "Alpha Project", modules: 1, podsPerModule: 1, active: true }] },
 }));
 
+const { markMembersReady, resetMemberCacheForTests } = await import("../src/services/memberCache.js");
 const { v1Router } = await import("../src/web/v1/router.js");
 
 let server: Server;
@@ -34,6 +37,8 @@ beforeEach(() => {
   memberFindMany.mockReset();
   attendanceFindMany.mockReset();
   guild = null;
+  resetMemberCacheForTests();
+  markMembersReady();
 });
 
 const auth = { Authorization: `Bearer ${KEY}` };
@@ -55,6 +60,16 @@ describe("v1Router", () => {
     const res = await fetch(`${base}/members`, { headers: auth });
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: "bot offline — leadership unknown" });
+  });
+  it("503s /members while the member cache is warming, 200 once ready", async () => {
+    memberFindMany.mockResolvedValue([]);
+    guild = { members: { cache: { get: () => undefined } } };
+    resetMemberCacheForTests();
+    const res = await fetch(`${base}/members`, { headers: auth });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "member cache warming" });
+    markMembersReady();
+    expect((await fetch(`${base}/members`, { headers: auth })).status).toBe(200);
   });
   it("maps stored project name to key and leadership from role names", async () => {
     memberFindMany.mockResolvedValue([row]);

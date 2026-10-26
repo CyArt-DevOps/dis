@@ -32,6 +32,7 @@ import {
 import { leaveHandlers } from "./interactions/leave.js";
 import { startMonthlySummary, stopMonthlySummary } from "./services/monthlySummary.js";
 import { startOutbox, stopOutbox } from "./services/emsOutbox.js";
+import { warmMemberCache } from "./services/memberCache.js";
 import { verificationHandlers } from "./interactions/verification.js";
 import { emsLinkHandlers } from "./interactions/emsLink.js";
 import { ticketHandlers } from "./interactions/tickets.js";
@@ -125,11 +126,10 @@ async function main() {
     startMonthlySummary(client);
     startOutbox();
     // /v1/members reads leadership from guild.members.cache, which is only
-    // complete after a full fetch. Non-blocking so a slow gateway can't delay startup.
-    void client.guilds.cache
-      .get(env.DISCORD_GUILD_ID)
-      ?.members.fetch()
-      .catch((err) => logger.warn({ err }, "Initial guild member fetch failed"));
+    // complete after a full fetch (retried with backoff until it succeeds).
+    // Non-blocking so a slow gateway can't delay startup.
+    const guild = client.guilds.cache.get(env.DISCORD_GUILD_ID);
+    if (guild) void warmMemberCache(guild);
     startTicketArchiveSweep(client);
     startScheduledMessages(client);
     void startDashboard();
