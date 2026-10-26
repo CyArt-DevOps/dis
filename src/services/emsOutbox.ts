@@ -13,7 +13,9 @@ const BATCH = 25;
 const INTERVAL_MS = 30_000;
 
 export function backoffMs(attempts: number): number {
-  return STEPS_MS[Math.min(attempts, STEPS_MS.length) - 1] ?? STEPS_MS[0]!;
+  // Clamp both ends: 0/negative attempts get the first step, large ones the last.
+  const i = Math.min(Math.max(attempts, 1), STEPS_MS.length) - 1;
+  return STEPS_MS[i]!;
 }
 
 export async function enqueueEvent(type: string, data: unknown): Promise<void> {
@@ -35,25 +37,40 @@ export async function flushOutbox(): Promise<void> {
     take: BATCH,
   });
   for (const row of due) {
-    const { data, occurredAt } = JSON.parse(row.payload) as { data: unknown; occurredAt: string };
     try {
+      // Parsed inside the try so one corrupt row backs off instead of blocking the queue.
+      const { data, occurredAt } = JSON.parse(row.payload) as { data: unknown; occurredAt: string };
       await emsPost("/events", { id: row.eventId, type: row.type, occurredAt, data });
       await prisma.outboundEvent.update({ where: { id: row.id }, data: { deliveredAt: new Date(), lastError: null } });
     } catch (err) {
       const attempts = row.attempts + 1;
-      await prisma.outboundEvent.update({
-        where: { id: row.id },
-        data: { attempts, lastError: String((err as Error).message).slice(0, 1000), nextAttemptAt: new Date(Date.now() + backoffMs(attempts)) },
-      });
       logger.warn({ eventId: row.eventId, attempts, err: (err as Error).message }, "EMS event delivery failed");
+      try {
+        await prisma.outboundEvent.update({
+          where: { id: row.id },
+          data: { attempts, lastError: String((err as Error).message).slice(0, 1000), nextAttemptAt: new Date(Date.now() + backoffMs(attempts)) },
+        });
+      } catch (updateErr) {
+        // A DB hiccup recording the failure must not strand the rest of the batch.
+        logger.warn({ eventId: row.eventId, err: updateErr }, "EMS outbox failure bookkeeping failed");
+      }
     }
   }
 }
 
 let timer: NodeJS.Timeout | null = null;
+// A slow EMS can make a flush outlast the interval; an overlapping flush would
+// re-read the same undelivered rows and resend them.
+let flushing = false;
 export function startOutbox(): void {
   if (timer || !integrationEnabled()) return;
-  timer = setInterval(() => void flushOutbox().catch((err) => logger.warn({ err }, "EMS outbox flush failed")), INTERVAL_MS);
+  timer = setInterval(() => {
+    if (flushing) return;
+    flushing = true;
+    void flushOutbox()
+      .catch((err) => logger.warn({ err }, "EMS outbox flush failed"))
+      .finally(() => { flushing = false; });
+  }, INTERVAL_MS);
 }
 export function stopOutbox(): void {
   if (timer) clearInterval(timer);

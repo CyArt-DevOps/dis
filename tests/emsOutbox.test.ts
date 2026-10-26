@@ -11,15 +11,33 @@ vi.mock("../src/core/db.js", () => ({
   },
 }));
 const post = vi.fn();
-vi.mock("../src/services/emsClient.js", () => ({ emsPost: (...a: unknown[]) => post(...a), integrationEnabled: () => true }));
+let enabled = true;
+vi.mock("../src/services/emsClient.js", () => ({ emsPost: (...a: unknown[]) => post(...a), integrationEnabled: () => enabled }));
 
 const { backoffMs, enqueueEvent, flushOutbox } = await import("../src/services/emsOutbox.js");
+const { prisma } = await import("../src/core/db.js");
 
-beforeEach(() => { rows.length = 0; post.mockReset(); });
+beforeEach(() => { rows.length = 0; post.mockReset(); enabled = true; });
 
 describe("backoffMs", () => {
   it("follows 1m, 5m, 30m, 2h then stays at 2h", () => {
     expect([1, 2, 3, 4, 9].map(backoffMs)).toEqual([60_000, 300_000, 1_800_000, 7_200_000, 7_200_000]);
+  });
+  it("clamps zero and negative attempts to the first step", () => {
+    expect(backoffMs(0)).toBe(60_000);
+    expect(backoffMs(-3)).toBe(60_000);
+  });
+});
+
+describe("enqueueEvent", () => {
+  it("is a no-op when the integration is disabled", async () => {
+    enabled = false;
+    await enqueueEvent("member.assigned", { id: "1" });
+    expect(rows).toHaveLength(0);
+  });
+  it("swallows a create() failure", async () => {
+    vi.mocked(prisma.outboundEvent.create).mockRejectedValueOnce(new Error("db down"));
+    await expect(enqueueEvent("member.assigned", { id: "1" })).resolves.toBeUndefined();
   });
 });
 
@@ -39,5 +57,17 @@ describe("flushOutbox", () => {
     expect(rows[0]!.attempts).toBe(1);
     expect(String(rows[0]!.lastError)).toContain("boom");
     expect((rows[0]!.nextAttemptAt as Date).getTime()).toBeGreaterThan(Date.now() + 50_000);
+  });
+  it("records a malformed payload as a failed attempt and still delivers the next row", async () => {
+    rows.push({ id: 1, attempts: 0, deliveredAt: null, eventId: "bad", type: "x", payload: "not json" });
+    await enqueueEvent("member.assigned", { id: "42" });
+    rows[1]!.id = 2;
+    post.mockResolvedValue({ ok: true });
+    await flushOutbox();
+    expect(rows[0]!.attempts).toBe(1);
+    expect(rows[0]!.deliveredAt).toBeNull();
+    expect((rows[0]!.nextAttemptAt as Date).getTime()).toBeGreaterThan(Date.now() + 50_000);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(rows[1]!.deliveredAt).toBeInstanceOf(Date);
   });
 });
