@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import express from "express";
+import { ChannelType } from "discord.js";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -10,15 +11,16 @@ vi.mock("../src/core/logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn()
 
 const memberFindMany = vi.fn();
 const attendanceFindMany = vi.fn();
+const voiceFindMany = vi.fn();
 vi.mock("../src/core/db.js", () => ({
-  prisma: { member: { findMany: memberFindMany }, attendance: { findMany: attendanceFindMany } },
+  prisma: { member: { findMany: memberFindMany }, attendance: { findMany: attendanceFindMany }, voiceSession: { findMany: voiceFindMany } },
 }));
 
 let guild: unknown = null;
 vi.mock("../src/core/botClient.js", () => ({ botGuild: () => guild }));
 
 vi.mock("../src/config/loader.js", () => ({
-  org: { projects: [{ key: "alpha", name: "Alpha Project", modules: 1, podsPerModule: 1, active: true }] },
+  org: { timezone: "Asia/Kolkata", projects: [{ key: "alpha", name: "Alpha Project", modules: 1, podsPerModule: 1, active: true }] },
 }));
 
 const { markMembersReady, resetMemberCacheForTests } = await import("../src/services/memberCache.js");
@@ -36,6 +38,8 @@ afterAll(() => new Promise<void>((r) => server.close(() => r())));
 beforeEach(() => {
   memberFindMany.mockReset();
   attendanceFindMany.mockReset();
+  voiceFindMany.mockReset();
+  voiceFindMany.mockResolvedValue([]);
   guild = null;
   resetMemberCacheForTests();
   markMembersReady();
@@ -101,5 +105,34 @@ describe("v1Router", () => {
     const res = await fetch(`${base}/attendance?from=2026-01-01&to=2026-01-31`, { headers: auth });
     expect(res.status).toBe(200);
     expect(await res.json()).toHaveLength(1);
+  });
+  it("adds secondsAssigned (assigned VCs only, clipped to the IST day) and firstJoinAt", async () => {
+    attendanceFindMany.mockResolvedValue([{ userId: "u1", day: "2026-01-02", seconds: 9000 }]);
+    memberFindMany.mockResolvedValue([{ id: "u1", project: "Alpha Project", module: 1, pod: 1 }]);
+    const ch = (id: string, name: string, type: number, parentId: string | null) => [id, { id, name, type, parentId }] as const;
+    guild = {
+      channels: { cache: new Map([
+        ch("c1", "ALPHA PROJECT", ChannelType.GuildCategory, null),
+        ch("v1", "Alpha Project General VC", ChannelType.GuildVoice, "c1"),
+        ch("c2", "Alpha Project M1", ChannelType.GuildCategory, null),
+        ch("v2", "Alpha Project M1 P1 VC", ChannelType.GuildVoice, "c2"),
+        ch("v9", "Random VC", ChannelType.GuildVoice, null),
+      ]) },
+      members: { cache: { get: () => ({ roles: { cache: { map: () => [] } } }) } },
+    };
+    // IST day 2026-01-02 = [2026-01-01T18:30Z, 2026-01-02T18:30Z)
+    voiceFindMany.mockResolvedValue([
+      { userId: "u1", channelId: "v2", joinedAt: new Date("2026-01-01T18:00:00Z"), leftAt: new Date("2026-01-01T19:30:00Z") }, // 1h inside the day
+      { userId: "u1", channelId: "v9", joinedAt: new Date("2026-01-02T05:00:00Z"), leftAt: new Date("2026-01-02T06:00:00Z") }, // not assigned
+      { userId: "u1", channelId: "v1", joinedAt: new Date("2026-01-02T06:00:00Z"), leftAt: new Date("2026-01-02T06:30:00Z") }, // 30 min
+    ]);
+    const res = await fetch(`${base}/attendance?from=2026-01-02&to=2026-01-02`, { headers: auth });
+    expect(await res.json()).toEqual([{ userId: "u1", day: "2026-01-02", seconds: 9000, secondsAssigned: 5400, firstJoinAt: "2026-01-01T18:30:00.000Z" }]);
+  });
+  it("reports secondsAssigned null while the bot is offline", async () => {
+    attendanceFindMany.mockResolvedValue([{ userId: "u1", day: "2026-01-02", seconds: 60 }]);
+    const [row] = (await (await fetch(`${base}/attendance?from=2026-01-02&to=2026-01-02`, { headers: auth })).json()) as { secondsAssigned: unknown; firstJoinAt: unknown }[];
+    expect(row!.secondsAssigned).toBeNull();
+    expect(row!.firstJoinAt).toBeNull();
   });
 });
