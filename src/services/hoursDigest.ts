@@ -3,6 +3,7 @@ import { org, activeProjects, type ProjectDef } from "../config/loader.js";
 import { logger } from "../core/logger.js";
 import { readState, updateState } from "../core/state.js";
 import { tzDateKey, tzDayStartUtc } from "../lib/time.js";
+import { placeNames } from "../lib/names.js";
 import { buildCalendars, type MemberCalendar } from "./calendar.js";
 import { holidayMap, isWorkingDay } from "./holidays.js";
 
@@ -57,7 +58,7 @@ function targetFor(guild: Guild, p: ProjectDef, m: MemberCalendar): { channel: T
     const ch = textChannel(guild, `${p.key}-m${m.module}-chat`) ?? textChannel(guild, `${p.key}-m${m.module}-info`);
     if (ch) return { channel: ch, label: `${p.name} · Module ${m.module}` };
   }
-  const general = textChannel(guild, "general", p.name.toUpperCase());
+  const general = textChannel(guild, "general", placeNames.projectCategory(p));
   return general ? { channel: general, label: p.name } : null;
 }
 

@@ -48,4 +48,9 @@ export const placeNames = {
   leadershipVc: (p: ProjectDef) => `${p.name} ${channelNames.leadershipVc()}`,
   moduleVc: (p: ProjectDef, mod: number) => `${p.name} ${moduleShort(p, mod)} VC`,
   podVc: (p: ProjectDef, mod: number, pod: number) => `${p.name} ${moduleShort(p, mod)} P${pod} VC`,
+  /** Every category name bootstrap may create for a project (project + each module). */
+  allCategories: (p: ProjectDef): string[] => [
+    placeNames.projectCategory(p),
+    ...Array.from({ length: p.modules }, (_, i) => placeNames.moduleCategory(p, i + 1)),
+  ],
 };

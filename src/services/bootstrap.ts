@@ -1012,8 +1012,7 @@ async function dedupCategoryChildren(guild: Guild, cat: CategoryChannel): Promis
 
 /** Run dedup on every category that belongs to the project. */
 async function dedupProject(guild: Guild, p: ProjectDef): Promise<void> {
-  const projectCatNames = new Set<string>([p.name.toUpperCase()]);
-  for (let m = 1; m <= p.modules; m++) projectCatNames.add(`${p.name} M${m}`);
+  const projectCatNames = new Set<string>(placeNames.allCategories(p));
   for (const cat of guild.channels.cache.values()) {
     if (cat.type !== ChannelType.GuildCategory) continue;
     if (!projectCatNames.has(cat.name)) continue;

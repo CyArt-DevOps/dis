@@ -52,4 +52,11 @@ describe("placeNames (what bootstrap creates)", () => {
     expect(placeNames.podVc(named, 2, 3)).toBe("CyBreach M2 P3 VC");
     expect(placeNames.podVc(named, 5, 1)).toBe("CyBreach Team Velocity P1 VC");
   });
+
+  it("allCategories lists project + module categories, respecting moduleNames", () => {
+    expect(placeNames.allCategories(named)).toEqual([
+      "CYBREACH", "CyBreach M1", "CyBreach M2", "CyBreach M3", "CyBreach M4", "CyBreach Team Velocity",
+    ]);
+    expect(placeNames.allCategories(plain)).toEqual(["PROJ", "Proj M1", "Proj M2", "Proj M3", "Proj M4"]);
+  });
 });

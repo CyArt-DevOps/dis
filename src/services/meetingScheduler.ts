@@ -16,6 +16,7 @@ import { findProject, org } from "../config/loader.js";
 import { roleNames } from "../lib/names.js";
 import { getOfficeVoiceChannel, officeOfVoiceChannel } from "./meeting.js";
 import { discordTimestamp, formatInTz } from "../lib/time.js";
+import { placeNames } from "../lib/names.js";
 import type { Meeting } from "@prisma/client";
 import { ticketsCategoryWithRoom } from "./ticketCategory.js";
 
@@ -349,7 +350,7 @@ function resolveNotificationChannel(guild: Guild, m: Meeting): TextChannel | nul
 
   if (m.audienceType === "project") {
     const cat = guild.channels.cache.find(
-      (c) => c.type === ChannelType.GuildCategory && c.name === p.name.toUpperCase()
+      (c) => c.type === ChannelType.GuildCategory && c.name === placeNames.projectCategory(p)
     );
     if (!cat) return null;
     const ch = guild.channels.cache.find(
