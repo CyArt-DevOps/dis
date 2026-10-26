@@ -23,6 +23,13 @@ const schema = z.object({
     .enum(["0", "1"])
     .default("1")
     .transform((v) => v === "1"),
+  // EMS integration. Unset = integration off (v1 API answers 503, outbox idle).
+  // Key EMS sends as `Authorization: Bearer` when it reads /api/v1/*.
+  DIS_API_KEY: z.string().min(32).optional(),
+  // Base URL of the EMS backend, no trailing slash, e.g. http://localhost:5000
+  EMS_API_URL: z.string().url().optional(),
+  // Shared HMAC secret for requests the bot sends to EMS (same value in EMS .env).
+  INTEGRATION_SECRET: z.string().min(32).optional(),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
