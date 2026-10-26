@@ -1,5 +1,6 @@
 import { z } from "zod";
 import dotenv from "dotenv";
+import { sanitizeIntegrationEnv } from "./envHelpers.js";
 
 dotenv.config();
 
@@ -38,6 +39,11 @@ const schema = z.object({
 
 const parsed = schema.safeParse({
   ...process.env,
+  // Bad integration values disable the integration rather than crash the bot.
+  DIS_API_KEY: undefined,
+  EMS_API_URL: undefined,
+  INTEGRATION_SECRET: undefined,
+  ...sanitizeIntegrationEnv(process.env),
   WEB_PORT: process.env.WEB_PORT ?? process.env.SERVER_PORT,
 });
 if (!parsed.success) {
