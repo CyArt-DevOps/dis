@@ -1,5 +1,8 @@
 import { env } from "../config/env.js";
+import { EmsHttpError } from "../lib/emsErrors.js";
 import { signRequest } from "../lib/signing.js";
+
+export { EmsHttpError };
 
 export class IntegrationDisabled extends Error {
   constructor() {
@@ -17,7 +20,7 @@ export async function emsPost<T = unknown>(path: string, body: unknown, timeoutM
   const fullPath = `/api/integrations/dis${path}`;
   const raw = JSON.stringify(body);
   const ts = String(Date.now());
-  const res = await fetch(`${env.EMS_API_URL}${fullPath}`, {
+  const res = await fetch(`${env.EMS_API_URL.replace(/\/+$/, "")}${fullPath}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -28,6 +31,6 @@ export async function emsPost<T = unknown>(path: string, body: unknown, timeoutM
     signal: AbortSignal.timeout(timeoutMs),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`EMS ${res.status}: ${text.slice(0, 200)}`);
+  if (!res.ok) throw new EmsHttpError(res.status, text);
   return (text ? JSON.parse(text) : {}) as T;
 }

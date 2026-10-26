@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "../core/db.js";
 import { logger } from "../core/logger.js";
+import { isRetryableEmsError } from "../lib/emsErrors.js";
 import { emsPost, integrationEnabled } from "./emsClient.js";
 
 /**
@@ -10,6 +11,24 @@ import { emsPost, integrationEnabled } from "./emsClient.js";
  */
 const STEPS_MS = [60_000, 300_000, 1_800_000, 7_200_000];
 const BATCH = 25;
+/** Rows at this many attempts are dead: never selected again, kept for inspection. */
+export const MAX_ATTEMPTS = 20;
+const PRUNE_EVERY_MS = 3_600_000;
+const KEEP_DELIVERED_MS = 30 * 86_400_000;
+let lastPrune = 0;
+export function resetPruneClockForTests(): void {
+  lastPrune = 0;
+}
+
+async function pruneDelivered(): Promise<void> {
+  if (Date.now() - lastPrune < PRUNE_EVERY_MS) return;
+  lastPrune = Date.now();
+  try {
+    await prisma.outboundEvent.deleteMany({ where: { deliveredAt: { lt: new Date(Date.now() - KEEP_DELIVERED_MS) } } });
+  } catch (err) {
+    logger.warn({ err }, "EMS outbox prune failed");
+  }
+}
 const INTERVAL_MS = 30_000;
 
 export function backoffMs(attempts: number): number {
@@ -31,8 +50,9 @@ export async function enqueueEvent(type: string, data: unknown): Promise<void> {
 }
 
 export async function flushOutbox(): Promise<void> {
+  await pruneDelivered();
   const due = await prisma.outboundEvent.findMany({
-    where: { deliveredAt: null, nextAttemptAt: { lte: new Date() } },
+    where: { deliveredAt: null, attempts: { lt: MAX_ATTEMPTS }, nextAttemptAt: { lte: new Date() } },
     orderBy: { id: "asc" },
     take: BATCH,
   });
@@ -43,12 +63,15 @@ export async function flushOutbox(): Promise<void> {
       await emsPost("/events", { id: row.eventId, type: row.type, occurredAt, data });
       await prisma.outboundEvent.update({ where: { id: row.id }, data: { deliveredAt: new Date(), lastError: null } });
     } catch (err) {
-      const attempts = row.attempts + 1;
-      logger.warn({ eventId: row.eventId, attempts, err: (err as Error).message }, "EMS event delivery failed");
+      const message = String((err as Error).message);
+      // A permanent 4xx will never succeed; park it at the cap instead of retrying.
+      const attempts = isRetryableEmsError(err) ? row.attempts + 1 : MAX_ATTEMPTS;
+      const dead = attempts >= MAX_ATTEMPTS;
+      logger.warn({ eventId: row.eventId, attempts, dead, err: message }, "EMS event delivery failed");
       try {
         await prisma.outboundEvent.update({
           where: { id: row.id },
-          data: { attempts, lastError: String((err as Error).message).slice(0, 1000), nextAttemptAt: new Date(Date.now() + backoffMs(attempts)) },
+          data: { attempts, lastError: `${dead ? "DEAD: " : ""}${message}`.slice(0, 1000), nextAttemptAt: new Date(Date.now() + backoffMs(attempts)) },
         });
       } catch (updateErr) {
         // A DB hiccup recording the failure must not strand the rest of the batch.
