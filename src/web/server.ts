@@ -46,6 +46,7 @@ import { clearInsightsCache } from "../services/insights.js";
 import { prisma } from "../core/db.js";
 import { shiftDayKey, tzDateKey, tzName } from "../lib/time.js";
 import { dashboardHtml } from "./page.js";
+import { v1Router } from "./v1/router.js";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,6 +71,8 @@ app.use(express.urlencoded({ extended: false }));
 // Terms of Service and Privacy Policy are public (Discord app verification needs
 // them); everything else stays behind the password gate below.
 app.use(legalRoutes);
+// EMS machine API: its own Bearer key, so it sits ahead of the staff password gate.
+app.use("/api/v1", v1Router);
 for (const h of authRoutes()) app.use(h);
 
 function guildOf(req: express.Request): string {
@@ -588,7 +591,7 @@ function listenOn(host: string, port: number): Promise<Server | string> {
 }
 
 /**
- * Start the dashboard on loopback only (there is no auth — see the note at the
+ * Start the dashboard (loopback unless WEB_HOST is set — see the note at the
  * top of this file).
  *
  * Both 127.0.0.1 AND ::1 are bound: browsers on Windows resolve "localhost" to
