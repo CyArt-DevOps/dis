@@ -210,14 +210,16 @@ export async function reconcileVoiceSessions(
       closed++;
       continue;
     }
-    tracked.add(key);
     if (actual.channelId !== s.channelId) {
-      // Missed a channel move: same continuous presence, new channel.
-      await prisma.voiceSession.update({
-        where: { id: s.id },
-        data: { channelId: actual.channelId },
-      });
+      // Missed a channel move. Do NOT relabel the session in place: that would
+      // retroactively credit all its elapsed time to the new channel. Close it
+      // at now (crediting the old channel) and leave the member untracked so the
+      // loop below opens a fresh session in the actual channel, like a real move.
+      await closeSession(s, now);
+      closed++;
+      continue;
     }
+    tracked.add(key);
   }
 
   for (const [key, l] of live) {
