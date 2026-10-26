@@ -22,18 +22,33 @@ v1Router.get("/health", (_req, res) => {
 /** All members (or those changed since `?updatedSince=ISO`), with leadership from live roles. */
 v1Router.get("/members", async (req, res) => {
   const since = typeof req.query.updatedSince === "string" ? new Date(req.query.updatedSince) : null;
+  if (since && Number.isNaN(since.getTime())) {
+    res.status(400).json({ error: "updatedSince must be an ISO date" });
+    return;
+  }
+  // Leadership is derived from live roles; without the guild we'd report every
+  // lead as a non-lead and EMS would demote them. Fail loudly instead.
+  const guild = botGuild(env.DISCORD_GUILD_ID);
+  if (!guild) {
+    res.status(503).json({ error: "bot offline — leadership unknown" });
+    return;
+  }
   const rows = await prisma.member.findMany({
     where: {
       guildId: env.DISCORD_GUILD_ID,
-      ...(since && !Number.isNaN(since.getTime()) ? { updatedAt: { gt: since } } : {}),
+      ...(since ? { updatedAt: { gt: since } } : {}),
     },
     orderBy: { updatedAt: "asc" },
   });
-  const guild = botGuild(env.DISCORD_GUILD_ID);
   res.json(
     rows.map((m) => {
-      const names = guild?.members.cache.get(m.id)?.roles.cache.map((r) => r.name) ?? [];
-      return memberDto({ ...m, project: projectKeyOf(m.project, org.projects) }, leadershipFromRoleNames(names, org.projects));
+      const names = guild.members.cache.get(m.id)?.roles.cache.map((r) => r.name) ?? [];
+      // Module/pod only mean something under a project EMS knows; drop them with it.
+      const project = projectKeyOf(m.project, org.projects);
+      return memberDto(
+        { ...m, project, module: project ? m.module : null, pod: project ? m.pod : null },
+        leadershipFromRoleNames(names, org.projects)
+      );
     })
   );
 });
@@ -50,6 +65,10 @@ v1Router.get("/attendance", async (req, res) => {
     return;
   }
   const span = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400_000;
+  if (Number.isNaN(span)) {
+    res.status(400).json({ error: "from and to must be real calendar dates" });
+    return;
+  }
   if (span > 31) {
     res.status(400).json({ error: "range too large (max 31 days)" });
     return;

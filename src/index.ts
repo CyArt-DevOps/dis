@@ -122,6 +122,12 @@ async function main() {
     startScheduler(client);
     startMonthlySummary(client);
     startOutbox();
+    // /v1/members reads leadership from guild.members.cache, which is only
+    // complete after a full fetch. Non-blocking so a slow gateway can't delay startup.
+    void client.guilds.cache
+      .get(env.DISCORD_GUILD_ID)
+      ?.members.fetch()
+      .catch((err) => logger.warn({ err }, "Initial guild member fetch failed"));
     startTicketArchiveSweep(client);
     startScheduledMessages(client);
     void startDashboard();

@@ -14,7 +14,7 @@ export function apiKeyGuard(getKey: () => string | undefined): RequestHandler {
       return;
     }
     const header = String(req.headers.authorization ?? "");
-    const got = Buffer.from(header.startsWith("Bearer ") ? header.slice(7) : "");
+    const got = Buffer.from(/^bearer /i.test(header) ? header.slice(7) : "");
     const want = Buffer.from(key);
     if (got.length !== want.length || !timingSafeEqual(got, want)) {
       res.status(401).json({ error: "unauthorized" });
