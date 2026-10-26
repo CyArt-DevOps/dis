@@ -4,7 +4,7 @@ import { org } from "../../config/loader.js";
 import { prisma } from "../../core/db.js";
 import { botGuild } from "../../core/botClient.js";
 import { apiKeyGuard } from "./apiKey.js";
-import { leadershipFromRoleNames, memberDto, orgDto } from "../../services/integrationPayloads.js";
+import { leadershipFromRoleNames, memberDto, orgDto, projectKeyOf } from "../../services/integrationPayloads.js";
 
 /**
  * Read API for the EMS portal. Bearer DIS_API_KEY; no cookie. Mounted ahead of
@@ -33,7 +33,7 @@ v1Router.get("/members", async (req, res) => {
   res.json(
     rows.map((m) => {
       const names = guild?.members.cache.get(m.id)?.roles.cache.map((r) => r.name) ?? [];
-      return memberDto(m, leadershipFromRoleNames(names, org.projects));
+      return memberDto({ ...m, project: projectKeyOf(m.project, org.projects) }, leadershipFromRoleNames(names, org.projects));
     })
   );
 });

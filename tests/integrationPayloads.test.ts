@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { leadershipFromRoleNames, memberDto, orgDto } from "../src/services/integrationPayloads.js";
+import { leadershipFromRoleNames, memberDto, orgDto, projectKeyOf } from "../src/services/integrationPayloads.js";
 
 const projects = [
   { key: "dt", name: "DarkTrace", modules: 2, podsPerModule: 3, active: true, moduleNames: { "2": "Team Velocity" }, moduleChannels: false, moduleVoice: false },
@@ -28,6 +28,15 @@ describe("memberDto", () => {
     expect(d).toEqual({ id: "42", fullName: "Dee", tag: "dee#1", batch: "Batch 2026", project: "dt", module: 1, pod: 2,
       status: "active", verificationStatus: "verified", updatedAt: "2026-10-26T10:00:00.000Z",
       leadership: { teamLeadOf: [], coLeadOf: [] } });
+  });
+});
+
+describe("projectKeyOf", () => {
+  it("resolves the stored project name (or a key) to the project key", () => {
+    expect(projectKeyOf("DarkTrace", projects)).toBe("dt");
+    expect(projectKeyOf("dt", projects)).toBe("dt");
+    expect(projectKeyOf("Gone Project", projects)).toBeNull();
+    expect(projectKeyOf(null, projects)).toBeNull();
   });
 });
 

@@ -38,6 +38,16 @@ export function leadershipFromRoleNames(names: string[], projects: ProjectLike[]
   return out;
 }
 
+/**
+ * Member.project stores the project's display name (onboarding writes p.name),
+ * but EMS keys projects by `key`. Accept either, return the key (null if the
+ * project no longer exists in org.json).
+ */
+export function projectKeyOf(value: string | null, projects: ProjectLike[]): string | null {
+  if (!value) return null;
+  return projects.find((p) => p.key === value || p.name === value)?.key ?? null;
+}
+
 export function memberDto(
   m: {
     id: string;
