@@ -31,6 +31,7 @@ import {
 } from "./services/meetingAttendance.js";
 import { leaveHandlers } from "./interactions/leave.js";
 import { startMonthlySummary, stopMonthlySummary } from "./services/monthlySummary.js";
+import { startOutbox, stopOutbox } from "./services/emsOutbox.js";
 import { verificationHandlers } from "./interactions/verification.js";
 import { ticketHandlers } from "./interactions/tickets.js";
 import { startTicketArchiveSweep, stopTicketArchiveSweep } from "./services/tickets.js";
@@ -120,6 +121,7 @@ async function main() {
     void restoreGrants();
     startScheduler(client);
     startMonthlySummary(client);
+    startOutbox();
     startTicketArchiveSweep(client);
     startScheduledMessages(client);
     void startDashboard();
@@ -129,6 +131,7 @@ async function main() {
     logger.info({ signal }, "Shutting down");
     stopScheduler();
     stopMonthlySummary();
+    stopOutbox();
     stopTicketArchiveSweep();
     stopWarningSweep();
     stopHoursDigest();

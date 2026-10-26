@@ -277,3 +277,19 @@ model WarnNote {
 
   @@index([warnId])
 }
+
+/// Events waiting to be delivered to the EMS portal (signed POST). Retried with
+/// backoff; EMS dedupes by eventId, so redelivery is harmless.
+model OutboundEvent {
+  id            Int       @id @default(autoincrement())
+  eventId       String    @unique @db.VarChar(36)
+  type          String    @db.VarChar(64)
+  payload       String    @db.Text
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  deliveredAt   DateTime?
+  lastError     String?   @db.Text
+  createdAt     DateTime  @default(now())
+
+  @@index([deliveredAt, nextAttemptAt])
+}
