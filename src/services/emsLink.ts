@@ -1,3 +1,4 @@
+import { escapeMarkdown } from "discord.js";
 import { emsPost } from "./emsClient.js";
 
 /** EMS replies for the link flow (api/services/disLinking.js). */
@@ -31,7 +32,8 @@ const DISCORD_TAKEN = "Your Discord account is already linked to a different por
 export function startMessage(r: StartResult): string {
   switch (r.status) {
     case "code_sent":
-      return `A 6-digit code was emailed to **${r.maskedEmail ?? "your email"}**. Click **Enter code** below (it expires in 15 minutes).`;
+      // The mask ("r***@x.com") is itself markdown — escape it or it eats the bold.
+      return `A 6-digit code was emailed to **${r.maskedEmail ? escapeMarkdown(r.maskedEmail) : "your email"}**. Click **Enter code** below (it expires in 15 minutes).`;
     case "not_found":
       return "No intern profile in the CyArt portal uses that email. Check the spelling, or open an HR ticket.";
     case "hr_mismatch":
