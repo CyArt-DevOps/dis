@@ -33,6 +33,7 @@ import { leaveHandlers } from "./interactions/leave.js";
 import { startMonthlySummary, stopMonthlySummary } from "./services/monthlySummary.js";
 import { startOutbox, stopOutbox } from "./services/emsOutbox.js";
 import { verificationHandlers } from "./interactions/verification.js";
+import { emsLinkHandlers } from "./interactions/emsLink.js";
 import { ticketHandlers } from "./interactions/tickets.js";
 import { startTicketArchiveSweep, stopTicketArchiveSweep } from "./services/tickets.js";
 import {
@@ -81,6 +82,7 @@ async function main() {
   await connectDb();
   registerAllCommands();
   for (const h of verificationHandlers) registry.registerHandler(h);
+  for (const h of emsLinkHandlers) registry.registerHandler(h);
   for (const h of ticketHandlers) registry.registerHandler(h);
   for (const h of leaveHandlers) registry.registerHandler(h);
   registry.registerHandler(projectWizardHandler);

@@ -14,6 +14,7 @@ import { panel } from "./panel.js";
 import { assign } from "./assign.js";
 import { leave } from "./leave.js";
 import { schedule } from "./schedule.js";
+import { link } from "./link.js";
 
 export function registerAllCommands(): void {
   registry.registerCommand(ping);
@@ -30,5 +31,6 @@ export function registerAllCommands(): void {
   registry.registerCommand(assign);
   registry.registerCommand(leave);
   registry.registerCommand(schedule);
+  registry.registerCommand(link);
   for (const cmd of moderationCommands) registry.registerCommand(cmd);
 }
