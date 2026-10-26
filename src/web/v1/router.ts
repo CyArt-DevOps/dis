@@ -98,7 +98,9 @@ async function withVoiceDetail(rows: { userId: string; day: string; seconds: num
     byUser.set(s.userId, list);
   }
 
-  const guild = botGuild(env.DISCORD_GUILD_ID);
+  // Guild unavailable OR member roles not warmed yet (empty role cache would make
+  // leads look like plain members) → assigned channels unknown → null, never a guess.
+  const guild = membersReady() ? botGuild(env.DISCORD_GUILD_ID) : null;
   const assigned = new Map<string, Set<string>>();
   if (guild) {
     const index = indexChannels(Array.from(guild.channels.cache.values(), toLite));
@@ -124,7 +126,7 @@ async function withVoiceDetail(rows: { userId: string; day: string; seconds: num
       now,
       guild ? assigned.get(r.userId) ?? new Set<string>() : null
     );
-    return { userId: r.userId, day: r.day, seconds: r.seconds, secondsAssigned: v.secondsAssigned, firstJoinAt: v.firstJoinAt ? v.firstJoinAt.toISOString() : null };
+    return { userId: r.userId, day: r.day, seconds: r.seconds, secondsAssigned: v.secondsAssigned === null ? null : Math.min(v.secondsAssigned, r.seconds), firstJoinAt: v.firstJoinAt ? v.firstJoinAt.toISOString() : null };
   });
 }
 
@@ -140,7 +142,7 @@ v1Router.get("/attendance", async (req, res) => {
     res.status(400).json({ error: "from and to must be real calendar dates" });
     return;
   }
-  if (span > 31) {
+  if (span > 30) {
     res.status(400).json({ error: "range too large (max 31 days)" });
     return;
   }

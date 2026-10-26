@@ -75,6 +75,8 @@ export function assignedChannelIds(idx: ChannelIndex, projects: ProjectLike[], m
  * One member's day: seconds in assigned channels (sessions clipped to the day
  * and to `now`), and the first moment they were in any voice channel that day.
  * `assigned` null = channels unknown (bot offline) → secondsAssigned null, never a guessed 0.
+ * firstJoinAt is clipped to the IST day start: a session spanning midnight reports
+ * the day's 00:00 (not its real earlier join) as that day's first join.
  */
 export function voiceDay(
   sessions: SessionLite[],

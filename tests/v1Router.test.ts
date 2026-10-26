@@ -135,4 +135,40 @@ describe("v1Router", () => {
     expect(row!.secondsAssigned).toBeNull();
     expect(row!.firstJoinAt).toBeNull();
   });
+  it("caps secondsAssigned at the row's capped seconds", async () => {
+    attendanceFindMany.mockResolvedValue([{ userId: "u1", day: "2026-01-02", seconds: 1800 }]);
+    memberFindMany.mockResolvedValue([{ id: "u1", project: "Alpha Project", module: 1, pod: 1 }]);
+    const ch = (id: string, name: string, type: number, parentId: string | null) => [id, { id, name, type, parentId }] as const;
+    guild = {
+      channels: { cache: new Map([
+        ch("c1", "ALPHA PROJECT", ChannelType.GuildCategory, null),
+        ch("v1", "Alpha Project General VC", ChannelType.GuildVoice, "c1"),
+      ]) },
+      members: { cache: { get: () => ({ roles: { cache: { map: () => [] } } }) } },
+    };
+    voiceFindMany.mockResolvedValue([
+      { userId: "u1", channelId: "v1", joinedAt: new Date("2026-01-02T06:00:00Z"), leftAt: new Date("2026-01-02T08:00:00Z") }, // 2h raw
+    ]);
+    const [r] = (await (await fetch(`${base}/attendance?from=2026-01-02&to=2026-01-02`, { headers: auth })).json()) as { secondsAssigned: number }[];
+    expect(r!.secondsAssigned).toBe(1800);
+  });
+  it("reports secondsAssigned null (firstJoinAt still set) while the member cache is warming", async () => {
+    attendanceFindMany.mockResolvedValue([{ userId: "u1", day: "2026-01-02", seconds: 3600 }]);
+    memberFindMany.mockResolvedValue([{ id: "u1", project: "Alpha Project", module: 1, pod: 1 }]);
+    guild = { channels: { cache: new Map() }, members: { cache: { get: () => undefined } } };
+    voiceFindMany.mockResolvedValue([
+      { userId: "u1", channelId: "v1", joinedAt: new Date("2026-01-02T06:00:00Z"), leftAt: new Date("2026-01-02T07:00:00Z") },
+    ]);
+    resetMemberCacheForTests();
+    const [r] = (await (await fetch(`${base}/attendance?from=2026-01-02&to=2026-01-02`, { headers: auth })).json()) as { secondsAssigned: unknown; firstJoinAt: unknown }[];
+    expect(r!.secondsAssigned).toBeNull();
+    expect(r!.firstJoinAt).toBe("2026-01-02T06:00:00.000Z");
+  });
+  it("allows exactly 31 inclusive days and rejects 32", async () => {
+    attendanceFindMany.mockResolvedValue([]);
+    expect((await fetch(`${base}/attendance?from=2026-01-01&to=2026-01-31`, { headers: auth })).status).toBe(200);
+    const res = await fetch(`${base}/attendance?from=2026-01-01&to=2026-02-01`, { headers: auth });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "range too large (max 31 days)" });
+  });
 });
