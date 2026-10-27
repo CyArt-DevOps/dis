@@ -19,6 +19,7 @@ import { discordTimestamp, formatInTz } from "../lib/time.js";
 import { placeNames } from "../lib/names.js";
 import type { Meeting } from "@prisma/client";
 import { ticketsCategoryWithRoom } from "./ticketCategory.js";
+import { emitMeetingEvent } from "./meetingSync.js";
 
 let client: Client | null = null;
 let sweepTimer: NodeJS.Timeout | null = null;
@@ -66,6 +67,11 @@ export interface ScheduleArgs {
   mandatory: boolean;
   attendanceWindowMin: number;
   reminderIntervalMin?: number;
+  /** EMS sync (Phase 3). Omitted for /meeting schedule: Prisma generates the uid, source = dis. */
+  uid?: string;
+  source?: "dis" | "ems";
+  recurrenceUid?: string;
+  updatedAt?: Date;
 }
 
 /** Resolve the role whose members are the meeting's required participants. */
@@ -141,9 +147,13 @@ export async function scheduleMeeting(args: ScheduleArgs): Promise<Meeting> {
       mandatory: args.mandatory,
       attendanceWindowMin: args.attendanceWindowMin,
       reminderIntervalMin: args.reminderIntervalMin,
+      ...(args.uid ? { uid: args.uid } : {}),
+      source: args.source ?? "dis",
+      recurrenceUid: args.recurrenceUid,
+      ...(args.updatedAt ? { updatedAt: args.updatedAt } : {}),
     },
   });
-  logger.info({ meeting: meeting.id, title: meeting.title }, "Meeting scheduled");
+  logger.info({ meeting: meeting.id, title: meeting.title, source: meeting.source }, "Meeting scheduled");
 
   // Named-people meetings can't be DM'd (bot anti-spam limits). Create a private
   // channel that only the invited people + staff can see; all notifications land there.
@@ -155,6 +165,8 @@ export async function scheduleMeeting(args: ScheduleArgs): Promise<Meeting> {
   await sendNotification(args.guild, meeting, "scheduled").catch((err) =>
     logger.warn({ err, meeting: meeting.id }, "Scheduled notification failed")
   );
+  // Tell EMS about meetings made in Discord. Meetings that came from EMS are not echoed back.
+  if (meeting.source === "dis") await emitMeetingEvent("meeting.created", meeting);
   return meeting;
 }
 
@@ -217,11 +229,19 @@ async function deletePeopleMeetingChannel(guild: Guild, m: Meeting, reason: stri
   await ch?.delete(reason).catch(() => {});
 }
 
-export async function cancelMeeting(meetingId: number): Promise<void> {
+/**
+ * `source` says where the cancel came from: "dis" (/meeting cancel) is sent to
+ * EMS, "ems" (the v1 API) is not echoed back. `updatedAt` carries EMS's clock.
+ */
+export async function cancelMeeting(
+  meetingId: number,
+  opts: { source?: "dis" | "ems"; updatedAt?: Date } = {}
+): Promise<Meeting> {
   const m = await prisma.meeting.update({
     where: { id: meetingId },
-    data: { status: "cancelled" },
+    data: { status: "cancelled", ...(opts.updatedAt ? { updatedAt: opts.updatedAt } : {}) },
   });
+  if ((opts.source ?? "dis") === "dis") await emitMeetingEvent("meeting.cancelled", m);
   if (client) {
     const guild = client.guilds.cache.get(m.guildId);
     if (guild) {
@@ -234,6 +254,14 @@ export async function cancelMeeting(meetingId: number): Promise<void> {
       );
     }
   }
+  return m;
+}
+
+/** Status change made by the sweep (monitoring / completed); EMS hears about it as meeting.updated. */
+export async function transitionStatus(m: Meeting, status: "monitoring" | "completed"): Promise<Meeting> {
+  const fresh = await prisma.meeting.update({ where: { id: m.id }, data: { status } });
+  await emitMeetingEvent("meeting.updated", fresh);
+  return fresh;
 }
 
 /** Exposed so attendance can clean up the private channel when a meeting ends. */
@@ -559,9 +587,9 @@ async function sweep(): Promise<void> {
     // stale snapshot below would skip this pass's tick and end.
     let status = m.status;
     if (status === "scheduled" && now >= startMs) {
-      await prisma.meeting.update({ where: { id: m.id }, data: { status: "monitoring" } });
+      const fresh = await transitionStatus(m, "monitoring");
       status = "monitoring";
-      await onMeetingStart({ ...m, status }).catch((err) =>
+      await onMeetingStart(fresh).catch((err) =>
         logger.error({ err, meeting: m.id }, "onMeetingStart failed")
       );
     }
@@ -576,8 +604,8 @@ async function sweep(): Promise<void> {
 
     // Finalize once the meeting + attendance window has elapsed.
     if (status === "monitoring" && now >= endMs) {
-      await prisma.meeting.update({ where: { id: m.id }, data: { status: "completed" } });
-      await onMeetingEnd({ ...m, status: "completed" }).catch((err) =>
+      const fresh = await transitionStatus(m, "completed");
+      await onMeetingEnd(fresh).catch((err) =>
         logger.error({ err, meeting: m.id }, "onMeetingEnd failed")
       );
     }
