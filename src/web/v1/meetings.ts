@@ -295,10 +295,12 @@ meetingsRouter.get("/:uid/attendance", async (req, res) => {
   if (m.status !== "completed") {
     return fail(res, 409, "not_final", `Attendance is not final; the meeting is ${m.status}.`, { status: m.status });
   }
+  // Stamped before the read, so the rows are at least this fresh; EMS keeps the newest version.
+  const generatedAt = new Date().toISOString();
   const rows = await prisma.meetingAttendance.findMany({
     where: { meetingId: m.id },
     select: { userId: true, status: true, minutesLate: true, secondsAttended: true },
     orderBy: { userId: "asc" },
   });
-  return res.json({ uid: m.uid, status: m.status, rows: attendanceRows(rows) });
+  return res.json({ uid: m.uid, status: m.status, generatedAt, rows: attendanceRows(rows) });
 });

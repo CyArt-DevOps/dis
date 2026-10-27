@@ -257,7 +257,10 @@ describe("GET /meetings and attendance", () => {
     meetingFindUnique.mockResolvedValue(row({ status: "completed" }));
     attendanceFindMany.mockResolvedValue([{ userId: "u1", status: "left_early", minutesLate: 0, secondsAttended: 700 }]);
     const res = await send("GET", `/${UID}/attendance`);
-    expect(await res.json()).toEqual({ uid: UID, status: "completed", rows: [{ discordUserId: "u1", status: "left_early", minutesLate: 0, secondsAttended: 700 }] });
+    const body = await res.json();
+    expect(body).toMatchObject({ uid: UID, status: "completed", rows: [{ discordUserId: "u1", status: "left_early", minutesLate: 0, secondsAttended: 700 }] });
+    // EMS orders attendance versions by generatedAt (newer wins over a late outbox event).
+    expect(Number.isNaN(Date.parse(body.generatedAt))).toBe(false);
   });
   it("401 without the key", async () => {
     expect((await fetch(`${base}`)).status).toBe(401);
