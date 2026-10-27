@@ -12,6 +12,7 @@ import { prisma } from "../core/db.js";
 import { channelNames, moduleShort, roleNames } from "../lib/names.js";
 import { bootstrapServer } from "./bootstrap.js";
 import { syncGuildCommands } from "./commandSync.js";
+import { normProject } from "./integrationPayloads.js";
 
 /** Choice lists in slash commands are baked at registration — refresh them. */
 async function refreshCommands(): Promise<void> {
@@ -146,8 +147,25 @@ export async function renameProject(
   // every intern of the renamed project would stop resolving to its key — and so
   // drop out of EMS's auto-warn switch, back under the bot's own auto-warnings.
   if (old.name !== newName) {
-    const moved = await prisma.member.updateMany({ where: { project: old.name }, data: { project: newName } });
-    logger.info({ project: key, members: moved.count }, "Member project names updated");
+    // projectKeyOf tolerates stray whitespace/case and the key form, so move every
+    // raw value that resolves the same way. Prisma can't trim in a where clause
+    // portably: fetch the guild's distinct values and match them here.
+    const targets = new Set([normProject(old.name), normProject(old.key)]);
+    const rows = await prisma.member.findMany({
+      where: { guildId: guild.id },
+      select: { project: true },
+      distinct: ["project"],
+    });
+    const matches = rows
+      .map((r) => r.project)
+      .filter((v): v is string => v !== null && targets.has(normProject(v)));
+    if (matches.length > 0) {
+      const moved = await prisma.member.updateMany({
+        where: { guildId: guild.id, project: { in: matches } },
+        data: { project: newName },
+      });
+      logger.info({ project: key, members: moved.count }, "Member project names updated");
+    }
   }
   logger.info({ project: key, from: old.name, to: newName }, "Project renamed");
   await refreshCommands();
