@@ -72,6 +72,28 @@ export function assignedChannelIds(idx: ChannelIndex, projects: ProjectLike[], m
 }
 
 /**
+ * Voice channel for a meeting EMS created (Phase 3 §3.3): the project General VC,
+ * the module VC or the pod VC. Null when the audience is not a project one or the
+ * channel does not exist (EMS then gets a 422).
+ */
+export function meetingVoiceChannelId(
+  idx: ChannelIndex,
+  projects: ProjectLike[],
+  a: { audienceType: string; audienceProject: string | null; audienceModule: number | null; audiencePod: number | null }
+): string | null {
+  const p = projects.find((x) => x.key === a.audienceProject) as ProjectDef | undefined;
+  if (!p) return null;
+  let ids: string[] = [];
+  if (a.audienceType === "project") ids = voiceUnder(idx, placeNames.projectCategory(p), placeNames.projectGeneralVc(p));
+  else if (a.audienceType === "module" && a.audienceModule) {
+    ids = voiceUnder(idx, placeNames.moduleCategory(p, a.audienceModule), placeNames.moduleVc(p, a.audienceModule));
+  } else if (a.audienceType === "pod" && a.audienceModule && a.audiencePod) {
+    ids = voiceUnder(idx, placeNames.moduleCategory(p, a.audienceModule), placeNames.podVc(p, a.audienceModule, a.audiencePod));
+  }
+  return ids[0] ?? null;
+}
+
+/**
  * One member's day: seconds in assigned channels (sessions clipped to the day
  * and to `now`), and the first moment they were in any voice channel that day.
  * `assigned` null = channels unknown (bot offline) → secondsAssigned null, never a guessed 0.

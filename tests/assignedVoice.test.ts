@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { ProjectDef } from "../src/config/loader.js";
-import { assignedChannelIds, indexChannels, voiceDay, type ChannelLite } from "../src/services/assignedVoice.js";
+import { assignedChannelIds, indexChannels, meetingVoiceChannelId, voiceDay, type ChannelLite } from "../src/services/assignedVoice.js";
 
 const alpha: ProjectDef = { key: "alpha", name: "Alpha", modules: 2, podsPerModule: 2, active: true };
 const PROJECTS = [alpha];
@@ -64,5 +64,20 @@ describe("voiceDay", () => {
     expect(voiceDay([s("v-m1p1", "2026-10-27T05:00:00Z", "2026-10-27T06:00:00Z")], D27.start, D27.end, LATE, null))
       .toEqual({ secondsAssigned: null, firstJoinAt: new Date("2026-10-27T05:00:00Z") });
     expect(voiceDay([], D27.start, D27.end, LATE, ASSIGNED)).toEqual({ secondsAssigned: 0, firstJoinAt: null });
+  });
+});
+
+describe("meetingVoiceChannelId (EMS-made meetings, Phase 3)", () => {
+  const a = (audienceType: string, audienceModule: number | null = null, audiencePod: number | null = null) =>
+    ({ audienceType, audienceProject: "alpha", audienceModule, audiencePod });
+  it("project → General VC, module → module VC, pod → pod VC (right category only)", () => {
+    expect(meetingVoiceChannelId(idx, PROJECTS, a("project"))).toBe("v-gen");
+    expect(meetingVoiceChannelId(idx, PROJECTS, a("module", 1))).toBe("v-m1");
+    expect(meetingVoiceChannelId(idx, PROJECTS, a("pod", 1, 1))).toBe("v-m1p1");
+  });
+  it("null for a missing channel, an unknown project or a non-project audience", () => {
+    expect(meetingVoiceChannelId(idx, PROJECTS, a("pod", 2, 1))).toBeNull();
+    expect(meetingVoiceChannelId(idx, PROJECTS, { ...a("project"), audienceProject: "nope" })).toBeNull();
+    expect(meetingVoiceChannelId(idx, PROJECTS, a("org"))).toBeNull();
   });
 });

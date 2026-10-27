@@ -9,6 +9,7 @@ import { membersReady } from "../../services/memberCache.js";
 import { leadershipFromRoleNames, memberDto, orgDto, projectKeyOf } from "../../services/integrationPayloads.js";
 import { shiftDayKey, tzDayStartUtc } from "../../lib/time.js";
 import { assignedChannelIds, indexChannels, voiceDay, type ChannelLite } from "../../services/assignedVoice.js";
+import { meetingsRouter } from "./meetings.js";
 
 /**
  * Read API for the EMS portal. Bearer DIS_API_KEY; no cookie. Mounted ahead of
@@ -18,6 +19,9 @@ export const v1Router = express.Router();
 v1Router.use(apiKeyGuard(() => env.DIS_API_KEY));
 
 const isDay = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+// Meetings synced with EMS (Phase 3): create / edit / cancel / catch-up / attendance.
+v1Router.use("/meetings", meetingsRouter);
 
 v1Router.get("/health", (_req, res) => {
   res.json({ ok: true, botOnline: botGuild(env.DISCORD_GUILD_ID) !== null, now: new Date().toISOString() });
