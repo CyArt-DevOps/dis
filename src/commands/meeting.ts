@@ -404,7 +404,20 @@ async function handleCancel(
     await interaction.reply({ content: "Only staff or the organizer can cancel.", flags: MessageFlags.Ephemeral });
     return;
   }
-  await cancelMeeting(id);
+  // Same rule as the EMS API: only a meeting that has not started can be cancelled.
+  if (m.status !== "scheduled") {
+    await interaction.reply({ content: `Meeting #${id} is ${m.status} — only a scheduled meeting can be cancelled.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const done = await cancelMeeting(id);
+  if (!done) {
+    const now = await prisma.meeting.findUnique({ where: { id } });
+    await interaction.reply({
+      content: `Meeting #${id} could not be cancelled — it is ${now?.status ?? "gone"}.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
   await interaction.reply({ content: `Cancelled meeting #${id}.`, flags: MessageFlags.Ephemeral });
 }
 

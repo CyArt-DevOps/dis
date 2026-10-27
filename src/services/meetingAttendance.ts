@@ -252,28 +252,43 @@ async function backfillFromVoiceSessions(meeting: Meeting): Promise<number> {
   return fixed;
 }
 
-/** At meeting end: generate the attendance report into #attendance-reports. */
-export async function handleMeetingEnd(meeting: Meeting): Promise<void> {
-  if (!client) return;
-  const guild = client.guilds.cache.get(meeting.guildId);
-  if (!guild) return;
-
-  // Final pass before the report is written: anyone still in the VC at the last
-  // moment, anyone the sweep missed entirely, and anyone whose leave landed late.
-  await handleMeetingTick(meeting).catch((err) =>
-    logger.warn({ err, meeting: meeting.id }, "Final attendance tick failed")
-  );
+/**
+ * Make the attendance final. Runs while the meeting is still `monitoring`; the
+ * scheduler marks it completed only after this resolves, so a throw (or a crash)
+ * leaves it to be redone on the next sweep. Every step is idempotent.
+ */
+export async function finalizeMeetingAttendance(meeting: Meeting): Promise<void> {
+  // Last pass over joins: anyone still in the VC at the last moment and anyone
+  // the sweep missed entirely. Best effort; the voice-session backfill covers a
+  // failed tick.
+  if (client?.guilds.cache.get(meeting.guildId)) {
+    await handleMeetingTick(meeting).catch((err) =>
+      logger.warn({ err, meeting: meeting.id }, "Final attendance tick failed")
+    );
+  }
   await backfillFromVoiceSessions(meeting).catch((err) =>
     logger.warn({ err, meeting: meeting.id }, "Attendance backfill failed")
   );
   // Time in the VC within the meeting; joined but < 70 % → left_early (Phase 3 §3.2).
-  await applyAttendanceTimes(meeting).catch((err) =>
-    logger.warn({ err, meeting: meeting.id }, "Attendance time pass failed")
-  );
+  // These two decide the final rows, so their errors propagate (retry next sweep).
+  await applyAttendanceTimes(meeting);
   // Approved leave wins over absent and left_early, so it runs last.
-  await reexcuseApprovedLeave(meeting).catch((err) =>
-    logger.warn({ err, meeting: meeting.id }, "Leave re-check failed")
+  await reexcuseApprovedLeave(meeting);
+}
+
+/**
+ * After the meeting is completed (rows already final): send EMS the attendance,
+ * post the report to #attendance-reports, escalate, clean up.
+ */
+export async function handleMeetingEnd(meeting: Meeting): Promise<void> {
+  // Final rows to EMS (Phase 3 §3.4) first, so nothing below can hold it back.
+  await emitAttendance(meeting.id).catch((err) =>
+    logger.warn({ err, meeting: meeting.id }, "Attendance event enqueue failed")
   );
+
+  if (!client) return;
+  const guild = client.guilds.cache.get(meeting.guildId);
+  if (!guild) return;
 
   const rows = await prisma.meetingAttendance.findMany({ where: { meetingId: meeting.id } });
   const present = rows.filter((r) => r.status === "present");
@@ -336,12 +351,6 @@ export async function handleMeetingEnd(meeting: Meeting): Promise<void> {
   logger.info(
     { meeting: meeting.id, present: present.length, late: late.length, leftEarly: leftEarly.length, excused: excused.length, absent: absent.length },
     "Attendance report generated"
-  );
-
-  // Final rows to EMS (Phase 3 §3.4). Queued before the Discord clean-up below so a
-  // failing channel delete can never hold it back.
-  await emitAttendance(meeting.id).catch((err) =>
-    logger.warn({ err, meeting: meeting.id }, "Attendance event enqueue failed")
   );
 
   // Escalate repeat unexcused absentees (3/5/7/10 thresholds).

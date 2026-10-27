@@ -28,15 +28,25 @@ let sweepTimer: NodeJS.Timeout | null = null;
 let onMeetingStart: (meeting: Meeting) => Promise<void> = async () => {};
 let onMeetingEnd: (meeting: Meeting) => Promise<void> = async () => {};
 let onMeetingTick: (meeting: Meeting) => Promise<void> = async () => {};
+let onMeetingFinalize: (meeting: Meeting) => Promise<void> = async () => {};
 
+/**
+ * onFinalize runs while the meeting is still `monitoring` and must throw if the
+ * attendance could not be made final: the sweep then leaves the meeting as it is
+ * and retries next pass. Only after it succeeds is the meeting marked completed
+ * and onEnd (report, EMS event, clean-up) runs. So `completed` always means the
+ * attendance rows are final, and a crash before that point is simply redone.
+ */
 export function setMeetingHooks(hooks: {
   onStart?: (m: Meeting) => Promise<void>;
   onEnd?: (m: Meeting) => Promise<void>;
   onTick?: (m: Meeting) => Promise<void>;
+  onFinalize?: (m: Meeting) => Promise<void>;
 }): void {
   if (hooks.onStart) onMeetingStart = hooks.onStart;
   if (hooks.onEnd) onMeetingEnd = hooks.onEnd;
   if (hooks.onTick) onMeetingTick = hooks.onTick;
+  if (hooks.onFinalize) onMeetingFinalize = hooks.onFinalize;
 }
 
 export const REMINDER_OFFSETS: { key: string; ms: number; label: string }[] = [
@@ -212,7 +222,8 @@ async function createPeopleMeetingChannel(guild: Guild, m: Meeting): Promise<Tex
       permissionOverwrites: overwrites,
       topic: `Meeting #${m.id} · ${m.title}`,
     });
-    await prisma.meeting.update({ where: { id: m.id }, data: { notifyChannelId: channel.id } });
+    // Bookkeeping, not a change EMS cares about: keep the sync clock where it is.
+    await prisma.meeting.update({ where: { id: m.id }, data: { notifyChannelId: channel.id, updatedAt: m.updatedAt } });
     return channel as TextChannel;
   } catch (err) {
     logger.warn({ err, meeting: m.id }, "Could not create meeting notification channel");
@@ -231,16 +242,32 @@ async function deletePeopleMeetingChannel(guild: Guild, m: Meeting, reason: stri
 
 /**
  * `source` says where the cancel came from: "dis" (/meeting cancel) is sent to
- * EMS, "ems" (the v1 API) is not echoed back. `updatedAt` carries EMS's clock.
+ * EMS, "ems" (the v1 API) is not echoed back. `updatedAt` carries EMS's clock;
+ * the stored clock never moves backwards (max of stored and supplied).
+ *
+ * Only a `scheduled` meeting can be cancelled. The write is conditional on that,
+ * so a sweep starting the meeting at the same moment wins cleanly. Returns null
+ * when the meeting is missing or no longer scheduled (the caller re-reads).
  */
 export async function cancelMeeting(
   meetingId: number,
   opts: { source?: "dis" | "ems"; updatedAt?: Date } = {}
-): Promise<Meeting> {
-  const m = await prisma.meeting.update({
-    where: { id: meetingId },
-    data: { status: "cancelled", ...(opts.updatedAt ? { updatedAt: opts.updatedAt } : {}) },
+): Promise<Meeting | null> {
+  const cur = await prisma.meeting.findUnique({ where: { id: meetingId } });
+  if (!cur || cur.status !== "scheduled") return null;
+  const updatedAt =
+    opts.updatedAt === undefined
+      ? undefined
+      : opts.updatedAt.getTime() > cur.updatedAt.getTime()
+        ? opts.updatedAt
+        : cur.updatedAt;
+  const { count } = await prisma.meeting.updateMany({
+    where: { id: meetingId, status: "scheduled" },
+    data: { status: "cancelled", ...(updatedAt ? { updatedAt } : {}) },
   });
+  if (count === 0) return null;
+  const m = await prisma.meeting.findUnique({ where: { id: meetingId } });
+  if (!m) return null;
   if ((opts.source ?? "dis") === "dis") await emitMeetingEvent("meeting.cancelled", m);
   if (client) {
     const guild = client.guilds.cache.get(m.guildId);
@@ -257,9 +284,23 @@ export async function cancelMeeting(
   return m;
 }
 
-/** Status change made by the sweep (monitoring / completed); EMS hears about it as meeting.updated. */
-export async function transitionStatus(m: Meeting, status: "monitoring" | "completed"): Promise<Meeting> {
-  const fresh = await prisma.meeting.update({ where: { id: m.id }, data: { status } });
+/**
+ * Status change made by the sweep (monitoring / completed); EMS hears about it as
+ * meeting.updated. Conditional on the snapshot the sweep acted on (status and
+ * startAt): if an API cancel or PATCH got there first, nothing is written, no
+ * event goes out and null is returned so the caller skips start / end work.
+ */
+export async function transitionStatus(m: Meeting, status: "monitoring" | "completed"): Promise<Meeting | null> {
+  const { count } = await prisma.meeting.updateMany({
+    where: { id: m.id, status: m.status, startAt: m.startAt },
+    data: { status },
+  });
+  if (count === 0) {
+    logger.info({ meeting: m.id, from: m.status, to: status }, "Meeting changed under the sweep; transition skipped");
+    return null;
+  }
+  const fresh = await prisma.meeting.findUnique({ where: { id: m.id } });
+  if (!fresh) return null;
   await emitMeetingEvent("meeting.updated", fresh);
   return fresh;
 }
@@ -489,12 +530,19 @@ async function sendNotification(guild: Guild, m: Meeting, label: string): Promis
  * Persist the full sent-set. The set (not a per-key append) is the source of
  * truth: appending from a stale snapshot dropped earlier keys when two offsets
  * fired in the same sweep, causing duplicate reminders on the next pass.
+ *
+ * Bookkeeping only, so the sync clock (updatedAt) is written back unchanged. The
+ * write is conditional on the snapshot's startAt and updatedAt: a PATCH that
+ * moved the meeting (and reset remindersSent) in the meantime is never undone.
+ * Returns false when the snapshot is stale; the sweep then leaves this meeting
+ * for the next pass.
  */
-async function persistRemindersSent(meetingId: number, sent: Set<string>): Promise<void> {
-  await prisma.meeting.update({
-    where: { id: meetingId },
-    data: { remindersSent: Array.from(sent).join(",") },
+async function persistRemindersSent(m: Meeting, sent: Set<string>): Promise<boolean> {
+  const { count } = await prisma.meeting.updateMany({
+    where: { id: m.id, startAt: m.startAt, updatedAt: m.updatedAt },
+    data: { remindersSent: Array.from(sent).join(","), updatedAt: m.updatedAt },
   });
+  return count > 0;
 }
 
 /**
@@ -547,16 +595,16 @@ async function cleanupMeetingOrphans(active: { id: number; voiceChannelId: strin
   }
 }
 
-/** One sweep pass: fire due reminders, start monitoring, finalize ended meetings. */
-async function sweep(): Promise<void> {
-  if (!client) return;
+/** One sweep pass: fire due reminders, start monitoring, finalize ended meetings. Exported for tests. */
+export async function sweep(c: Client | null = client): Promise<void> {
+  if (!c) return;
   const now = Date.now();
   const meetings = await prisma.meeting.findMany({
     where: { status: { in: ["scheduled", "monitoring"] } },
   });
 
-  for (const m of meetings) {
-    const guild = client.guilds.cache.get(m.guildId);
+  meetingLoop: for (const m of meetings) {
+    const guild = c.guilds.cache.get(m.guildId);
     if (!guild) continue;
     const startMs = m.startAt.getTime();
     const sent = new Set(m.remindersSent.split(",").filter(Boolean));
@@ -569,7 +617,7 @@ async function sweep(): Promise<void> {
         // (e.g. meeting created < offset before start) — only fire within 6h late.
         if (off.key !== "start" && now - fireAt > 6 * 3600_000) {
           sent.add(off.key);
-          await persistRemindersSent(m.id, sent);
+          if (!(await persistRemindersSent(m, sent))) continue meetingLoop;
           continue;
         }
         // Only mark the reminder sent if it actually delivered. A transient
@@ -578,17 +626,18 @@ async function sweep(): Promise<void> {
         const delivered = await sendNotification(guild, m, off.label);
         if (delivered) {
           sent.add(off.key);
-          await persistRemindersSent(m.id, sent);
+          if (!(await persistRemindersSent(m, sent))) continue meetingLoop;
         }
       }
     }
 
     // Begin monitoring at start. Track the transition locally too — reading the
     // stale snapshot below would skip this pass's tick and end.
-    let status = m.status;
-    if (status === "scheduled" && now >= startMs) {
-      const fresh = await transitionStatus(m, "monitoring");
-      status = "monitoring";
+    let cur: Meeting = m;
+    if (cur.status === "scheduled" && now >= startMs) {
+      const fresh = await transitionStatus(cur, "monitoring");
+      if (!fresh) continue; // cancelled or moved by the API meanwhile
+      cur = fresh;
       await onMeetingStart(fresh).catch((err) =>
         logger.error({ err, meeting: m.id }, "onMeetingStart failed")
       );
@@ -596,15 +645,24 @@ async function sweep(): Promise<void> {
 
     // While monitoring, record live attendance each sweep.
     const endMs = startMs + (m.durationMin + m.attendanceWindowMin) * 60_000;
-    if (status === "monitoring" && now < endMs) {
-      await onMeetingTick(m).catch((err) =>
+    if (cur.status === "monitoring" && now < endMs) {
+      await onMeetingTick(cur).catch((err) =>
         logger.error({ err, meeting: m.id }, "onMeetingTick failed")
       );
     }
 
-    // Finalize once the meeting + attendance window has elapsed.
-    if (status === "monitoring" && now >= endMs) {
-      const fresh = await transitionStatus(m, "completed");
+    // Once the meeting + attendance window has elapsed: make the attendance final
+    // first, then mark completed, then report. A failure or crash before the
+    // status write leaves the meeting `monitoring`, so the next sweep redoes it.
+    if (cur.status === "monitoring" && now >= endMs) {
+      try {
+        await onMeetingFinalize(cur);
+      } catch (err) {
+        logger.error({ err, meeting: m.id }, "Attendance finalize failed; retrying next sweep");
+        continue;
+      }
+      const fresh = await transitionStatus(cur, "completed");
+      if (!fresh) continue;
       await onMeetingEnd(fresh).catch((err) =>
         logger.error({ err, meeting: m.id }, "onMeetingEnd failed")
       );

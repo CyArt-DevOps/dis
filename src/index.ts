@@ -25,6 +25,7 @@ import { initMeetings, restoreGrants } from "./services/meeting.js";
 import { setMeetingHooks, startScheduler, stopScheduler } from "./services/meetingScheduler.js";
 import {
   handleMeetingEnd,
+  finalizeMeetingAttendance,
   handleMeetingStart,
   handleMeetingTick,
   initMeetingAttendance,
@@ -107,6 +108,7 @@ async function main() {
   setMeetingHooks({
     onStart: handleMeetingStart,
     onTick: handleMeetingTick,
+    onFinalize: finalizeMeetingAttendance,
     onEnd: handleMeetingEnd,
   });
 

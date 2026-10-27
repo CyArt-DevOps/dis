@@ -33,9 +33,11 @@ meetingsRouter.use(express.json({ limit: "64kb" }));
 const AUDIENCES = ["org", "batch", "project", "module", "pod", "people"] as const;
 const discordId = z.string().regex(/^\d{15,25}$/, "must be a Discord id");
 const uidSchema = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "must be a UUID");
+// An explicit offset (Z or ±hh:mm) is required: a bare local time would be read in
+// the bot host's timezone and silently shift the meeting.
 const isoDate = z
   .string()
-  .refine((v) => !Number.isNaN(Date.parse(v)), "must be an ISO date")
+  .datetime({ offset: true, message: "must be an ISO date with an offset (Z or ±hh:mm)" })
   .transform((v) => new Date(v));
 
 const createSchema = z
@@ -175,14 +177,32 @@ meetingsRouter.post("/", async (req, res) => {
   }
 });
 
-/** Catch-up list for EMS: changed at or after ?updatedSince (max 500, oldest change first). */
+/**
+ * Catch-up list for EMS: changed at or after ?updatedSince (max 500), ordered by
+ * (updatedAt, uid). Paging: pass the last row's updatedAt as updatedSince and its
+ * uid as afterId to get the rows strictly after that (updatedAt, uid) pair, so a
+ * burst of more than 500 rows with the same updatedAt is never skipped or looped.
+ * Without afterId the old behaviour (updatedAt >= updatedSince) is unchanged.
+ */
 meetingsRouter.get("/", async (req, res) => {
   const raw = req.query.updatedSince;
   const since = typeof raw === "string" ? new Date(raw) : new Date(0);
   if (Number.isNaN(since.getTime())) return fail(res, 400, "invalid", "updatedSince must be an ISO date.");
+  const rawAfter = req.query.afterId;
+  let afterId: string | undefined;
+  if (rawAfter !== undefined) {
+    const p = uidSchema.safeParse(rawAfter);
+    if (!p.success) return fail(res, 400, "invalid", "afterId must be a meeting uid.");
+    afterId = p.data;
+  }
   const rows = await prisma.meeting.findMany({
-    where: { guildId: env.DISCORD_GUILD_ID, updatedAt: { gte: since } },
-    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+    where: {
+      guildId: env.DISCORD_GUILD_ID,
+      ...(afterId
+        ? { OR: [{ updatedAt: { gt: since } }, { updatedAt: since, uid: { gt: afterId } }] }
+        : { updatedAt: { gte: since } }),
+    },
+    orderBy: [{ updatedAt: "asc" }, { uid: "asc" }],
     take: 500,
   });
   return res.json(rows.map(meetingDto));
@@ -202,8 +222,10 @@ meetingsRouter.patch("/:uid", async (req, res) => {
   if (b.startAt && b.startAt.getTime() <= Date.now()) return fail(res, 422, "start_in_past", "startAt must be in the future.");
 
   const startChanged = b.startAt !== undefined && b.startAt.getTime() !== m.startAt.getTime();
-  const fresh = await prisma.meeting.update({
-    where: { id: m.id },
+  // Conditional on what was checked above: if the sweep started the meeting or
+  // another edit landed in between, nothing is written and the caller gets a 409.
+  const { count } = await prisma.meeting.updateMany({
+    where: { id: m.id, status: "scheduled", updatedAt: m.updatedAt },
     data: {
       ...(b.title !== undefined ? { title: b.title } : {}),
       ...(b.description !== undefined ? { description: b.description } : {}),
@@ -215,6 +237,9 @@ meetingsRouter.patch("/:uid", async (req, res) => {
       updatedAt: b.updatedAt,
     },
   });
+  if (count === 0) return conflictAfterRace(res, m.id, "stale");
+  const fresh = await prisma.meeting.findUnique({ where: { id: m.id } });
+  if (!fresh) return fail(res, 404, "not_found", "No meeting with this uid.");
   const guild = botGuild(env.DISCORD_GUILD_ID);
   if (guild && (startChanged || (b.title !== undefined && b.title !== m.title))) {
     await renotifyMeeting(guild, fresh).catch((err) => logger.warn({ err, uid: m.uid }, "Re-notify after edit failed"));
@@ -231,13 +256,45 @@ meetingsRouter.post("/:uid/cancel", async (req, res) => {
   if (m.status === "cancelled") return res.json(meetingDto(m));
   if (m.status !== "scheduled") return fail(res, 409, "already_started", `The meeting is ${m.status}.`, { meeting: meetingDto(m) });
   const fresh = await cancelMeeting(m.id, { source: "ems", updatedAt: parsed.data.updatedAt ?? undefined });
+  if (!fresh) {
+    // The sweep started it (or another cancel won) between the read and the write.
+    const again = await prisma.meeting.findUnique({ where: { id: m.id } });
+    if (again?.status === "cancelled") return res.json(meetingDto(again));
+    return conflictAfterRace(res, m.id, "already_started", again);
+  }
   return res.json(meetingDto(fresh));
 });
 
-/** Final attendance rows, for reconcile. */
+/**
+ * A conditional write matched nothing: re-read and explain. `not_scheduled` /
+ * `already_started` when the meeting has moved on, otherwise `fallback` (e.g. stale).
+ */
+async function conflictAfterRace(
+  res: Res,
+  id: number,
+  fallback: "stale" | "already_started",
+  known?: Awaited<ReturnType<typeof prisma.meeting.findUnique>>
+) {
+  const again = known !== undefined ? known : await prisma.meeting.findUnique({ where: { id } });
+  if (!again) return fail(res, 404, "not_found", "No meeting with this uid.");
+  if (again.status !== "scheduled") {
+    const code = fallback === "already_started" ? "already_started" : "not_scheduled";
+    return fail(res, 409, code, `The meeting is ${again.status}.`, { meeting: meetingDto(again) });
+  }
+  return fail(res, 409, fallback, "The meeting changed while this request was being applied.", { meeting: meetingDto(again) });
+}
+
+/**
+ * Final attendance rows, for reconcile. Only a completed meeting has final rows
+ * (the bot finishes seconds, left_early and leave before marking it completed);
+ * anything else answers 409 not_final with the current status.
+ */
 meetingsRouter.get("/:uid/attendance", async (req, res) => {
   const m = await prisma.meeting.findUnique({ where: { uid: req.params.uid } });
   if (!m) return fail(res, 404, "not_found", "No meeting with this uid.");
+  if (m.status !== "completed") {
+    return fail(res, 409, "not_final", `Attendance is not final; the meeting is ${m.status}.`, { status: m.status });
+  }
   const rows = await prisma.meetingAttendance.findMany({
     where: { meetingId: m.id },
     select: { userId: true, status: true, minutesLate: true, secondsAttended: true },

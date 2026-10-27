@@ -87,5 +87,5 @@ export async function emitAttendance(meetingId: number): Promise<void> {
     select: { userId: true, status: true, minutesLate: true, secondsAttended: true },
     orderBy: { userId: "asc" },
   });
-  await enqueueEvent("meeting.attendance", { uid: m.uid, rows: attendanceRows(rows) });
+  await enqueueEvent("meeting.attendance", { uid: m.uid, generatedAt: new Date().toISOString(), rows: attendanceRows(rows) });
 }

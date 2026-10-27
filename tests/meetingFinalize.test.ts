@@ -23,11 +23,13 @@ vi.mock("../src/core/db.js", () => ({
   },
 }));
 
-const { applyAttendanceTimes, reexcuseApprovedLeave } = await import("../src/services/meetingFinalize.js");
+const { applyAttendanceTimes, reexcuseApprovedLeave, downtimeOverlaps } = await import("../src/services/meetingFinalize.js");
 
 const t = (hhmm: string) => new Date(`2026-10-27T${hhmm}:00Z`);
 // 60-minute meeting 10:00–11:00 (the 10-minute attendance window is not meeting time).
 const meeting = { id: 1, guildId: "g1", voiceChannelId: "v1", startAt: t("10:00"), durationMin: 60 } as never;
+// The bot has been up since before the meeting (no downtime overlap).
+const booted = t("08:00");
 
 beforeEach(() => {
   covered.clear();
@@ -46,7 +48,7 @@ beforeEach(() => {
 
 describe("applyAttendanceTimes", () => {
   it("stores clipped secondsAttended and marks joined members under 70 % left_early", async () => {
-    expect(await applyAttendanceTimes(meeting, t("12:00"))).toBe(1);
+    expect(await applyAttendanceTimes(meeting, t("12:00"), booted)).toBe(1);
     expect(rows.map((r) => [r.userId, r.status, r.secondsAttended])).toEqual([
       ["stay", "present", 3600],
       ["early", "left_early", 1500],
@@ -54,17 +56,23 @@ describe("applyAttendanceTimes", () => {
       ["leave", "excused", 0],
     ]);
   });
+  it("bot downtime overlapping the meeting: seconds are stored but nobody is marked left_early", async () => {
+    expect(await applyAttendanceTimes(meeting, t("12:00"), t("10:20"))).toBe(0);
+    expect(rows.find((r) => r.userId === "early")).toMatchObject({ status: "late", secondsAttended: 1500 });
+    expect(downtimeOverlaps(meeting, t("10:20"))).toBe(true);
+    expect(downtimeOverlaps(meeting, t("09:59"))).toBe(false);
+  });
   it("writes nothing when the numbers are unchanged", async () => {
-    await applyAttendanceTimes(meeting, t("12:00"));
+    await applyAttendanceTimes(meeting, t("12:00"), booted);
     update.mockClear();
-    await applyAttendanceTimes(meeting, t("12:00"));
+    await applyAttendanceTimes(meeting, t("12:00"), booted);
     expect(update).not.toHaveBeenCalled();
   });
 });
 
 describe("reexcuseApprovedLeave", () => {
   it("approved leave beats left_early and absent", async () => {
-    await applyAttendanceTimes(meeting, t("12:00"));
+    await applyAttendanceTimes(meeting, t("12:00"), booted);
     covered.add("early").add("gone");
     expect(await reexcuseApprovedLeave(meeting)).toBe(2);
     expect(rows.find((r) => r.userId === "early")!.status).toBe("excused");

@@ -14,10 +14,11 @@ vi.mock("../src/config/loader.js", () => ({
 const meetingFindUnique = vi.fn();
 const meetingFindMany = vi.fn();
 const meetingUpdate = vi.fn();
+const meetingUpdateMany = vi.fn();
 const attendanceFindMany = vi.fn();
 vi.mock("../src/core/db.js", () => ({
   prisma: {
-    meeting: { findUnique: meetingFindUnique, findMany: meetingFindMany, update: meetingUpdate },
+    meeting: { findUnique: meetingFindUnique, findMany: meetingFindMany, update: meetingUpdate, updateMany: meetingUpdateMany },
     meetingAttendance: { findMany: attendanceFindMany },
   },
 }));
@@ -67,7 +68,7 @@ beforeAll(async () => {
 });
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 beforeEach(() => {
-  for (const f of [meetingFindUnique, meetingFindMany, meetingUpdate, attendanceFindMany, scheduleMeeting, cancelMeeting, renotifyMeeting]) f.mockReset();
+  for (const f of [meetingFindUnique, meetingFindMany, meetingUpdate, meetingUpdateMany, attendanceFindMany, scheduleMeeting, cancelMeeting, renotifyMeeting]) f.mockReset();
   guild = fakeGuild;
   ready = true;
   roleFound = true;
@@ -131,6 +132,17 @@ describe("POST /meetings", () => {
     expect(res.status).toBe(400);
     expect((await res.json()).issues).toContain("audiencePod: required for audience pod");
   });
+  it("400 when startAt or updatedAt has no explicit offset", async () => {
+    const local = new Date(Date.now() + 86_400_000).toISOString().replace("Z", "");
+    const res = await send("POST", "", createBody({ startAt: local }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).issues[0]).toMatch(/^startAt: /);
+    expect((await send("POST", "", createBody({ updatedAt: "2026-10-27T01:00:00" }))).status).toBe(400);
+    meetingFindUnique.mockResolvedValue(null);
+    scheduleMeeting.mockResolvedValue(row());
+    const withOffset = new Date(Date.now() + 86_400_000).toISOString().replace("Z", "+05:30");
+    expect((await send("POST", "", createBody({ startAt: withOffset }))).status).toBe(201);
+  });
   it("503 bot_offline without the guild", async () => {
     meetingFindUnique.mockResolvedValue(null);
     guild = null;
@@ -140,13 +152,30 @@ describe("POST /meetings", () => {
 
 describe("PATCH /meetings/:uid", () => {
   it("applies the edit with EMS's updatedAt and re-arms reminders on a new time", async () => {
-    meetingFindUnique.mockResolvedValue(row());
     const startAt = new Date(Date.now() + 2 * 86_400_000).toISOString();
-    meetingUpdate.mockResolvedValue(row({ startAt: new Date(startAt), updatedAt: new Date("2026-10-27T02:00:00Z") }));
+    meetingFindUnique
+      .mockResolvedValueOnce(row())
+      .mockResolvedValueOnce(row({ startAt: new Date(startAt), updatedAt: new Date("2026-10-27T02:00:00Z") }));
+    meetingUpdateMany.mockResolvedValue({ count: 1 });
     const res = await send("PATCH", `/${UID}`, { startAt, updatedAt: "2026-10-27T02:00:00.000Z" });
     expect(res.status).toBe(200);
-    expect(meetingUpdate.mock.calls[0]![0].data).toMatchObject({ startAt: new Date(startAt), remindersSent: "", updatedAt: new Date("2026-10-27T02:00:00Z") });
+    expect((await res.json()).updatedAt).toBe("2026-10-27T02:00:00.000Z");
+    const call = meetingUpdateMany.mock.calls[0]![0];
+    expect(call.where).toEqual({ id: 7, status: "scheduled", updatedAt: new Date("2026-10-27T01:00:00Z") });
+    expect(call.data).toMatchObject({ startAt: new Date(startAt), remindersSent: "", updatedAt: new Date("2026-10-27T02:00:00Z") });
     expect(renotifyMeeting).toHaveBeenCalled();
+  });
+  it("409 when the sweep started it (not_scheduled) or another edit landed (stale) between read and write", async () => {
+    meetingUpdateMany.mockResolvedValue({ count: 0 });
+    meetingFindUnique.mockResolvedValueOnce(row()).mockResolvedValueOnce(row({ status: "monitoring" }));
+    let res = await send("PATCH", `/${UID}`, { title: "New", updatedAt: "2026-10-27T02:00:00.000Z" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("not_scheduled");
+    meetingFindUnique.mockResolvedValueOnce(row()).mockResolvedValueOnce(row({ updatedAt: new Date("2026-10-27T01:30:00Z") }));
+    res = await send("PATCH", `/${UID}`, { title: "New", updatedAt: "2026-10-27T02:00:00.000Z" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("stale");
+    expect(renotifyMeeting).not.toHaveBeenCalled();
   });
   it("409 stale when the edit is older than the stored meeting", async () => {
     meetingFindUnique.mockResolvedValue(row());
@@ -182,6 +211,13 @@ describe("POST /meetings/:uid/cancel", () => {
     expect((await send("POST", `/${UID}/cancel`, {})).status).toBe(200);
     expect(cancelMeeting).not.toHaveBeenCalled();
   });
+  it("409 already_started when the sweep starts it between the read and the write", async () => {
+    meetingFindUnique.mockResolvedValueOnce(row()).mockResolvedValueOnce(row({ status: "monitoring" }));
+    cancelMeeting.mockResolvedValue(null);
+    const res = await send("POST", `/${UID}/cancel`, {});
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("already_started");
+  });
 });
 
 describe("GET /meetings and attendance", () => {
@@ -194,8 +230,28 @@ describe("GET /meetings and attendance", () => {
       where: { guildId: "g1", updatedAt: { gte: new Date("2026-10-27T00:00:00Z") } }, take: 500,
     });
   });
+  it("orders by (updatedAt, uid) and pages strictly after (updatedSince, afterId)", async () => {
+    meetingFindMany.mockResolvedValue([]);
+    await send("GET", `?updatedSince=2026-10-27T00:00:00.000Z&afterId=${UID}`);
+    const since = new Date("2026-10-27T00:00:00Z");
+    expect(meetingFindMany.mock.calls[0]![0]).toEqual({
+      where: { guildId: "g1", OR: [{ updatedAt: { gt: since } }, { updatedAt: since, uid: { gt: UID } }] },
+      orderBy: [{ updatedAt: "asc" }, { uid: "asc" }],
+      take: 500,
+    });
+    expect((await send("GET", "?updatedSince=2026-10-27T00:00:00.000Z&afterId=7")).status).toBe(400);
+  });
   it("400 on a bad updatedSince", async () => {
     expect((await send("GET", "?updatedSince=nope")).status).toBe(400);
+  });
+  it("409 not_final until the meeting is completed", async () => {
+    for (const status of ["scheduled", "monitoring", "cancelled"]) {
+      meetingFindUnique.mockResolvedValue(row({ status }));
+      const res = await send("GET", `/${UID}/attendance`);
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ error: "not_final", status });
+    }
+    expect(attendanceFindMany).not.toHaveBeenCalled();
   });
   it("returns the final attendance rows", async () => {
     meetingFindUnique.mockResolvedValue(row({ status: "completed" }));
