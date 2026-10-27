@@ -4,6 +4,7 @@ import { env } from "../../config/env.js";
 import { org } from "../../config/loader.js";
 import { prisma } from "../../core/db.js";
 import { botGuild } from "../../core/botClient.js";
+import { logger } from "../../core/logger.js";
 import { apiKeyGuard } from "./apiKey.js";
 import { membersReady } from "../../services/memberCache.js";
 import { leadershipFromRoleNames, memberDto, orgDto, projectKeyOf } from "../../services/integrationPayloads.js";
@@ -161,3 +162,21 @@ v1Router.get("/attendance", async (req, res) => {
   });
   res.json(await withVoiceDetail(rows));
 });
+
+/**
+ * Last in the chain: any error from a v1 route (Express 5 forwards rejected async
+ * handlers here) becomes JSON EMS can read. Body-parser failures keep their 4xx;
+ * everything else is 500 { error: "internal" }. Details go to the log, never the
+ * response (no stack traces, no Prisma/SQL text).
+ */
+v1Router.use(((err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+  const e = err as { status?: number; type?: string };
+  if (typeof e?.status === "number" && e.status >= 400 && e.status < 500 && typeof e.type === "string") {
+    const message = e.type === "entity.too.large" ? "Request body is too large." : "Request body is not valid JSON.";
+    res.status(e.status).json({ error: "invalid", message });
+    return;
+  }
+  logger.error({ err, path: _req.path, method: _req.method }, "v1 API error");
+  res.status(500).json({ error: "internal", message: "Internal error in the DIS bot; see its logs." });
+}) as express.ErrorRequestHandler);

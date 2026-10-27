@@ -30,6 +30,12 @@ export function dmPaused(): boolean {
   return Date.now() < dmPausedUntil;
 }
 
+/** Discord quarantined the bot's DMs (20026): stop attempting DMs for a while. */
+export function pauseDms(): void {
+  dmPausedUntil = Date.now() + DM_PAUSE_MS;
+  logger.warn("Discord DM quarantine detected: using private threads for 6 hours");
+}
+
 export interface Delivery {
   via: "dm" | "thread" | "none";
   channelId: string | null;
@@ -53,10 +59,7 @@ export async function notifyMember(guild: Guild, userId: string, payload: Notify
       const msg = await user.send({ embeds: payload.embeds, components: payload.components });
       return { via: "dm", channelId: msg.channelId, messageId: msg.id };
     } catch (err) {
-      if ((err as { code?: number }).code === QUARANTINE_CODE) {
-        dmPausedUntil = Date.now() + DM_PAUSE_MS;
-        logger.warn("Discord DM quarantine detected: using private threads for 6 hours");
-      }
+      if ((err as { code?: number }).code === QUARANTINE_CODE) pauseDms();
     }
   }
 

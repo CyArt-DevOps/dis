@@ -16,7 +16,8 @@ vi.mock("../src/core/db.js", () => ({
   prisma: { warn: { findUnique: warnFindUnique, create: warnCreate, update: warnUpdate }, warnNote: { create: noteCreate } },
 }));
 let paused = false;
-vi.mock("../src/services/notify.js", () => ({ dmPaused: () => paused }));
+const pauseDms = vi.fn();
+vi.mock("../src/services/notify.js", () => ({ dmPaused: () => paused, pauseDms }));
 const getAutoWarn = vi.fn(async () => ({ disabledProjects: [] as string[] | "all" }));
 const setAutoWarn = vi.fn(async (v: unknown) => v);
 vi.mock("../src/services/autoWarn.js", () => ({ getAutoWarn, setAutoWarn }));
@@ -29,7 +30,7 @@ vi.mock("../src/core/botClient.js", () => ({
   botGuild: () => (online ? { members: { fetch: membersFetch } } : null),
 }));
 
-const { ladderRouter } = await import("../src/web/v1/ladder.js");
+const { ladderRouter, resetDmThrottleForTests, setDmSendTimeoutForTests } = await import("../src/web/v1/ladder.js");
 const { apiKeyGuard } = await import("../src/web/v1/apiKey.js");
 
 const UID = "0f8fad5b-d9cb-469f-a165-70867728950e";
@@ -44,7 +45,9 @@ beforeAll(async () => {
 });
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 beforeEach(() => {
-  for (const f of [warnFindUnique, warnCreate, warnUpdate, noteCreate, memberSend, membersFetch, getAutoWarn, setAutoWarn]) f.mockClear();
+  for (const f of [warnFindUnique, warnCreate, warnUpdate, noteCreate, memberSend, membersFetch, getAutoWarn, setAutoWarn, pauseDms]) f.mockClear();
+  resetDmThrottleForTests();
+  setDmSendTimeoutForTests(12_000);
   membersFetch.mockResolvedValue({ send: memberSend });
   memberSend.mockResolvedValue({});
   paused = false;
@@ -75,12 +78,48 @@ describe("POST /dm", () => {
     let res = await send("POST", "/dm", { discordUserId: DID, content: "hi" });
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ error: "dm_failed", reason: "dms_closed" });
-    membersFetch.mockRejectedValueOnce(new Error("Unknown Member"));
+    expect(pauseDms).not.toHaveBeenCalled(); // closed DMs are one person's setting, not a bot-wide problem
+    resetDmThrottleForTests();
+    membersFetch.mockRejectedValueOnce(Object.assign(new Error("Unknown Member"), { code: 10007 }));
     res = await send("POST", "/dm", { discordUserId: DID, content: "hi" });
     expect(await res.json()).toMatchObject({ error: "dm_failed", reason: "not_in_guild" });
+    membersFetch.mockRejectedValueOnce(Object.assign(new Error("Unknown User"), { code: 10013 }));
+    res = await send("POST", "/dm", { discordUserId: DID, content: "hi" });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: "dm_failed", reason: "unknown_user" });
     paused = true;
     res = await send("POST", "/dm", { discordUserId: DID, content: "hi" });
     expect(await res.json()).toMatchObject({ error: "dm_failed", reason: "dm_paused" });
+  });
+  it("503 bot_unavailable when Discord fails for another reason (EMS may retry)", async () => {
+    membersFetch.mockRejectedValueOnce(Object.assign(new Error("Service Unavailable"), { status: 503 }));
+    const res = await send("POST", "/dm", { discordUserId: DID, content: "hi" });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: "bot_unavailable", message: expect.stringMatching(/Service Unavailable/) });
+    expect(memberSend).not.toHaveBeenCalled();
+  });
+  it("a quarantine error (20026) pauses the bot's DMs like notify does", async () => {
+    memberSend.mockRejectedValueOnce(Object.assign(new Error("flagged"), { code: 20026 }));
+    const res = await send("POST", "/dm", { discordUserId: DID, content: "hi" });
+    expect(await res.json()).toMatchObject({ error: "dm_failed", reason: "bot_quarantined" });
+    expect(pauseDms).toHaveBeenCalledTimes(1);
+  });
+  it("one DM per person per 30 s → 429 rate_limited; other people are unaffected", async () => {
+    expect((await send("POST", "/dm", { discordUserId: DID, content: "hi" })).status).toBe(200);
+    const res = await send("POST", "/dm", { discordUserId: DID, content: "hi again" });
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ error: "rate_limited" });
+    expect(res.headers.get("retry-after")).toMatch(/^\d+$/);
+    expect((await send("POST", "/dm", { discordUserId: "200000000000000002", content: "hi" })).status).toBe(200);
+    expect(memberSend).toHaveBeenCalledTimes(2);
+  });
+  it("a send that hangs → 503 send_timeout (it may still arrive; the throttle stops a quick duplicate)", async () => {
+    setDmSendTimeoutForTests(30);
+    memberSend.mockImplementationOnce(() => new Promise(() => {}));
+    const res = await send("POST", "/dm", { discordUserId: DID, content: "hi" });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: "send_timeout" });
+    expect((await send("POST", "/dm", { discordUserId: DID, content: "hi" })).status).toBe(429);
   });
   it("503 bot_offline without the gateway", async () => {
     online = false;
@@ -138,6 +177,12 @@ describe("/warns mirror", () => {
     res = await send("DELETE", `/warns/${UID}`);
     expect(res.status).toBe(200);
     expect(warnUpdate).toHaveBeenCalledTimes(1);
+    warnFindUnique.mockResolvedValueOnce({ id: 9, externalUid: UID, status: "dismissed" });
+    res = await send("DELETE", `/warns/${UID}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: 9, uid: UID, status: "dismissed" });
+    expect(warnUpdate).toHaveBeenCalledTimes(1);
+    expect(noteCreate).toHaveBeenCalledTimes(1);
     warnFindUnique.mockResolvedValueOnce(null);
     expect((await send("DELETE", `/warns/${UID}`)).status).toBe(404);
     expect((await send("DELETE", "/warns/nope")).status).toBe(400);

@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 const KEY = "k".repeat(40);
 vi.mock("../src/config/env.js", () => ({ env: { DIS_API_KEY: "k".repeat(40), DISCORD_GUILD_ID: "g1" } }));
 
-vi.mock("../src/core/logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn() } }));
+vi.mock("../src/core/logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 
 const memberFindMany = vi.fn();
 const attendanceFindMany = vi.fn();
@@ -176,5 +176,24 @@ describe("v1Router", () => {
     const res = await fetch(`${base}/attendance?from=2026-01-01&to=2026-02-01`, { headers: auth });
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "range too large (max 31 days)" });
+  });
+  it("a thrown error → 500 { error: 'internal', message } as JSON, no stack trace", async () => {
+    attendanceFindMany.mockRejectedValue(new Error("db exploded\n    at secret (/srv/app.js:1:1)"));
+    const res = await fetch(`${base}/attendance?from=2026-01-01&to=2026-01-02`, { headers: auth });
+    expect(res.status).toBe(500);
+    expect(res.headers.get("content-type")).toMatch(/json/);
+    const body = await res.json();
+    expect(body).toEqual({ error: "internal", message: expect.any(String) });
+    expect(JSON.stringify(body)).not.toMatch(/secret|app\.js|stack/);
+  });
+  it("malformed JSON on a ladder route → 400 invalid JSON (not an HTML page)", async () => {
+    const res = await fetch(`${base}/dm`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: "{nope" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid" });
+  });
+  it("does not parse JSON bodies for routes outside the ladder", async () => {
+    // With a router-wide parser this would 400 on the bad body before reaching any route.
+    const res = await fetch(`${base}/no-such-route`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: "{nope" });
+    expect(res.status).toBe(404);
   });
 });
