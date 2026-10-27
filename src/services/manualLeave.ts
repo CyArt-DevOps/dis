@@ -4,6 +4,8 @@ import { shiftDayKey, tzDateKey, tzDayStartUtc } from "../lib/time.js";
 import { hasApprovedLeaveCovering } from "./leave.js";
 import { clearCalendarCache } from "./calendar.js";
 import { clearInsightsCache } from "./insights.js";
+import { joinedStatus } from "./meetingMath.js";
+import { emitAttendance } from "./meetingSync.js";
 
 /**
  * Leave granted by HR straight from the dashboard profile, for specific days.
@@ -56,10 +58,18 @@ async function meetingRowsOn(guildId: string, userId: string, days: string[]) {
   const end = tzDayStartUtc(shiftDayKey(days[days.length - 1]!, 1));
   const rows = await prisma.meetingAttendance.findMany({
     where: { userId, scheduledStart: { gte: start, lt: end }, meeting: { guildId } },
-    select: { id: true, status: true, scheduledStart: true, actualJoinAt: true, leaveStatus: true },
+    select: {
+      id: true, meetingId: true, status: true, scheduledStart: true, actualJoinAt: true, leaveStatus: true,
+      minutesLate: true, secondsAttended: true, meeting: { select: { durationMin: true } },
+    },
   });
   const set = new Set(days);
   return rows.filter((r) => set.has(tzDateKey(r.scheduledStart)));
+}
+
+/** A leave decision changed rows of finished meetings: send EMS their attendance again (Phase 3 §3.4). */
+async function resendAttendance(meetingIds: Set<number>): Promise<void> {
+  for (const id of meetingIds) await emitAttendance(id).catch(() => {});
 }
 
 export async function grantManualLeave(
@@ -86,17 +96,20 @@ export async function grantManualLeave(
     },
   });
 
-  // Meetings already held on those days: an absence becomes excused, as it
-  // would have if the leave had existed when the meeting started.
+  // Meetings already held on those days: an absence (or an early leave) becomes
+  // excused, as it would have if the leave had existed when the meeting started.
   let excusedMeetings = 0;
+  const changed = new Set<number>();
   for (const r of await meetingRowsOn(guildId, userId, v.days)) {
-    if (r.status !== "absent") continue;
+    if (r.status !== "absent" && r.status !== "left_early") continue;
     await prisma.meetingAttendance.update({
       where: { id: r.id },
       data: { status: "excused", leaveStatus: "approved" },
     });
     excusedMeetings++;
+    changed.add(r.meetingId);
   }
+  await resendAttendance(changed);
 
   clearCalendarCache();
   clearInsightsCache();
@@ -113,19 +126,23 @@ export async function revokeManualLeave(guildId: string, userId: string, leaveId
   if (row.status !== "approved") throw new LeaveInputError("This leave is not active.");
   await prisma.leaveRequest.update({ where: { id: leaveId }, data: { status: "revoked" } });
 
-  // Put back absences this grant excused, unless another approved leave still
-  // covers the meeting.
+  // Put back what this grant excused, unless another approved leave still covers
+  // the meeting: no join → absent; joined → present / late / left_early again.
   const days = (row.approvedDays ?? "").split(",").filter(Boolean);
+  const changed = new Set<number>();
   if (days.length) {
     for (const r of await meetingRowsOn(guildId, userId, days)) {
-      if (r.status !== "excused" || r.actualJoinAt) continue;
+      if (r.status !== "excused") continue;
       if (await hasApprovedLeaveCovering(guildId, userId, r.scheduledStart)) continue;
+      const status = r.actualJoinAt ? joinedStatus(r.minutesLate, r.secondsAttended, r.meeting.durationMin) : "absent";
       await prisma.meetingAttendance.update({
         where: { id: r.id },
-        data: { status: "absent", leaveStatus: "none" },
+        data: { status, leaveStatus: "none" },
       });
+      changed.add(r.meetingId);
     }
   }
+  await resendAttendance(changed);
   clearCalendarCache();
   clearInsightsCache();
 }
