@@ -133,6 +133,7 @@ export interface Overview {
     totalMeetings: number;
     present: number;
     late: number;
+    leftEarly: number;
     absent: number;
     excused: number;
     attendancePct: number;
@@ -261,6 +262,7 @@ export interface MemberInsights {
   meetingStats: {
     present: number;
     late: number;
+    leftEarly: number;
     absent: number;
     excused: number;
     pct: number;
@@ -363,6 +365,7 @@ export interface OrgInsights {
     status: string;
     present: number;
     late: number;
+    leftEarly: number;
     absent: number;
     excused: number;
     pct: number;

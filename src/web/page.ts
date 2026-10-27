@@ -209,7 +209,7 @@ var views = {
         ['Voice total (range)', hm(o.voice.totalSeconds)],
         ['Members tracked', o.voice.trackedMembers],
         ['Meeting attendance', o.meetings.attendancePct + '%'],
-        ['Present / Late', o.meetings.present + ' / ' + o.meetings.late],
+        ['Present / Late / Left early', o.meetings.present + ' / ' + o.meetings.late + ' / ' + (o.meetings.leftEarly || 0)],
         ['Absent / Excused', o.meetings.absent + ' / ' + o.meetings.excused],
         ['Meetings', o.meetings.totalMeetings]
       ]);
@@ -320,14 +320,14 @@ var views = {
       var rows = filt(all, function(m){
         return { text: m.fullName + ' ' + (m.project||''), seconds: m.total };
       });
-      return table(['#', 'Member', 'Project', 'M/P', '%', '', 'Present', 'Late', 'Absent', 'Excused', 'Meetings'],
+      return table(['#', 'Member', 'Project', 'M/P', '%', '', 'Present', 'Late', 'Left early', 'Absent', 'Excused', 'Meetings'],
         rows.map(function(m, i){
           return { id: m.userId, cells: [
             i + 1, esc(m.fullName), esc(m.project), (m.module || '?') + '/' + (m.pod || '?'),
             m.pct + '%',
             '<div class="bar"><span style="width:' + m.pct + '%;background:' +
               (m.pct >= 80 ? 'var(--good)' : m.pct >= 50 ? 'var(--warn)' : 'var(--bad)') + '"></span></div>',
-            m.present, m.late, m.absent, m.excused, m.total
+            m.present, m.late, m.leftEarly || 0, m.absent, m.excused, m.total
           ] };
         }), { id: 'lbTbl' });
     });
@@ -335,7 +335,7 @@ var views = {
 
   meetings: function(){
     return api('/api/meetings').then(function(rows){
-      return table(['#', 'Title', 'Start', 'Duration', 'Status', 'Present', 'Late', 'Absent', 'Excused'],
+      return table(['#', 'Title', 'Start', 'Duration', 'Status', 'Present', 'Late', 'Left early', 'Absent', 'Excused'],
         rows.map(function(m){
           var c = m.counts || {};
           return { cells: [
@@ -343,6 +343,7 @@ var views = {
             '<span class="pill">' + esc(m.status) + '</span>',
             '<span class="pill present">' + (c.present || 0) + '</span>',
             '<span class="pill late">' + (c.late || 0) + '</span>',
+            '<span class="pill late">' + (c.left_early || 0) + '</span>',
             '<span class="pill absent">' + (c.absent || 0) + '</span>',
             (c.excused || 0)
           ] };

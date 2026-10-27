@@ -15,13 +15,15 @@ export function MeetingsPage() {
   const rows = (data ?? []).map((m) => {
     const present = m.counts.present ?? 0;
     const late = m.counts.late ?? 0;
+    const leftEarly = m.counts.left_early ?? 0; // attended but under 70 %: counts toward attendance
     const absent = m.counts.absent ?? 0;
     const excused = m.counts.excused ?? 0;
-    const expected = present + late + absent;
-    return { ...m, present, late, absent, excused, expected, pct: expected ? Math.round(((present + late) / expected) * 1000) / 10 : 0 };
+    const attended = present + late + leftEarly;
+    const expected = attended + absent;
+    return { ...m, present, late, leftEarly, absent, excused, attended, expected, pct: expected ? Math.round((attended / expected) * 1000) / 10 : 0 };
   });
   const held = rows.filter((r) => r.expected > 0);
-  const sum = held.reduce((a, r) => ({ p: a.p + r.present + r.late, e: a.e + r.expected, l: a.l + r.late, ab: a.ab + r.absent }), { p: 0, e: 0, l: 0, ab: 0 });
+  const sum = held.reduce((a, r) => ({ p: a.p + r.attended, e: a.e + r.expected, l: a.l + r.late, ab: a.ab + r.absent }), { p: 0, e: 0, l: 0, ab: 0 });
   const avg = sum.e ? Math.round((sum.p / sum.e) * 1000) / 10 : 0;
   const upcoming = rows.filter((r) => r.status === "scheduled").length;
 
@@ -57,6 +59,7 @@ export function MeetingsPage() {
                   <th className="w-[24%] px-3 py-2.5 font-medium">Attendance</th>
                   <th className="px-3 py-2.5 text-right font-medium">On time</th>
                   <th className="px-3 py-2.5 text-right font-medium">Late</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Left early</th>
                   <th className="px-3 py-2.5 text-right font-medium">Absent</th>
                   <th className="px-5 py-2.5 text-right font-medium">Excused</th>
                 </tr>
@@ -94,6 +97,7 @@ export function MeetingsPage() {
                     </td>
                     <td className="px-3 text-right tabular-nums text-emerald-300">{m.present}</td>
                     <td className="px-3 text-right tabular-nums text-amber-300">{m.late}</td>
+                    <td className="px-3 text-right tabular-nums text-orange-300">{m.leftEarly}</td>
                     <td className="px-3 text-right tabular-nums text-rose-300">{m.absent}</td>
                     <td className="px-5 text-right tabular-nums text-dim">{m.excused}</td>
                   </tr>

@@ -3,7 +3,7 @@ import { authRoutes } from "./auth.js";
 import { legalRoutes } from "./legal.js";
 import { env } from "../config/env.js";
 import { logger } from "../core/logger.js";
-import { computeAttendance, computeByMember, type AttendanceFilter } from "../services/attendanceStats.js";
+import { computeAttendance, computeByMember, summarizeCounts, type AttendanceFilter } from "../services/attendanceStats.js";
 import {
   complianceForDay,
   defaultRange,
@@ -495,11 +495,13 @@ app.get("/api/meetings", async (req, res) => {
     row[c.status] = c._count._all;
     byMeeting.set(c.meetingId, row);
   }
+  // `counts` stays keyed by stored status (incl. left_early); `summary` is the
+  // same numbers with left_early counted as attended-but-flagged.
   res.json(
-    meetings.map((m) => ({
-      ...m,
-      counts: byMeeting.get(m.id) ?? {},
-    }))
+    meetings.map((m) => {
+      const counts = byMeeting.get(m.id) ?? {};
+      return { ...m, counts, summary: summarizeCounts(counts) };
+    })
   );
 });
 

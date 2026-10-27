@@ -21,13 +21,14 @@ import {
   type Tone,
 } from "../components/ui";
 
-type Filter = "all" | "present" | "late" | "absent" | "excused";
+type Filter = "all" | "present" | "late" | "left_early" | "absent" | "excused";
 
 const STATUS: Record<string, { label: string; tone: Tone; order: number }> = {
   present: { label: "On time", tone: "good", order: 0 },
   late: { label: "Late", tone: "warn", order: 1 },
-  absent: { label: "Absent", tone: "bad", order: 2 },
-  excused: { label: "Excused (leave)", tone: "info", order: 3 },
+  left_early: { label: "Left early", tone: "warn", order: 2 },
+  absent: { label: "Absent", tone: "bad", order: 3 },
+  excused: { label: "Excused (leave)", tone: "info", order: 4 },
 };
 
 function clock(iso: string): string {
@@ -40,7 +41,7 @@ export function MeetingDetailPage({ id }: { id: number }) {
   const [q, setQ] = useState("");
 
   const counts = useMemo(() => {
-    const c = { present: 0, late: 0, absent: 0, excused: 0 };
+    const c = { present: 0, late: 0, left_early: 0, absent: 0, excused: 0 };
     for (const a of data?.attendees ?? []) if (a.status in c) c[a.status as keyof typeof c]++;
     return c;
   }, [data]);
@@ -59,8 +60,10 @@ export function MeetingDetailPage({ id }: { id: number }) {
 
   const m = data.meeting;
   const start = new Date(m.startAt);
-  const expected = counts.present + counts.late + counts.absent;
-  const pct = expected ? Math.round(((counts.present + counts.late) / expected) * 1000) / 10 : 0;
+  // Left early = joined but under 70 % of the meeting: attended, shown separately.
+  const attended = counts.present + counts.late + counts.left_early;
+  const expected = attended + counts.absent;
+  const pct = expected ? Math.round((attended / expected) * 1000) / 10 : 0;
   const lateRows = data.attendees.filter((a) => a.status === "late");
   const avgLate = lateRows.length ? Math.round(lateRows.reduce((s, a) => s + a.minutesLate, 0) / lateRows.length) : 0;
   const audience =
@@ -99,7 +102,7 @@ export function MeetingDetailPage({ id }: { id: number }) {
       {m.description ? <p className="max-w-3xl text-sm text-muted">{m.description}</p> : null}
 
       <StatStrip cols={5}>
-        <Stat label="Attendance" value={`${pct}%`} tone={expected ? rateTone(pct) : undefined} hint={`${counts.present + counts.late} of ${expected} expected`} />
+        <Stat label="Attendance" value={`${pct}%`} tone={expected ? rateTone(pct) : undefined} hint={`${attended} of ${expected} expected${counts.left_early ? ` · ${counts.left_early} left early` : ""}`} />
         <Stat label="Joined on time" value={counts.present} tone="good" />
         <Stat label="Joined late" value={counts.late} tone={counts.late ? "warn" : undefined} hint={counts.late ? `avg ${avgLate} min late` : " "} />
         <Stat label="Absent" value={counts.absent} tone={counts.absent ? "bad" : undefined} hint="never joined" />
@@ -114,6 +117,7 @@ export function MeetingDetailPage({ id }: { id: number }) {
               segments={[
                 { label: "On time", value: counts.present, color: "#34d399" },
                 { label: "Late", value: counts.late, color: "#fbbf24" },
+                { label: "Left early", value: counts.left_early, color: "#fb923c" },
                 { label: "Absent", value: counts.absent, color: "#fb7185" },
                 { label: "Excused", value: counts.excused, color: "#a5b4fc" },
               ]}
@@ -148,6 +152,7 @@ export function MeetingDetailPage({ id }: { id: number }) {
                 { value: "all", label: `All ${data.attendees.length}` },
                 { value: "present", label: `On time ${counts.present}` },
                 { value: "late", label: `Late ${counts.late}` },
+                { value: "left_early", label: `Left early ${counts.left_early}` },
                 { value: "absent", label: `Absent ${counts.absent}` },
                 { value: "excused", label: `Excused ${counts.excused}` },
               ]}
