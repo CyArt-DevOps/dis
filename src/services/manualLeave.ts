@@ -4,7 +4,7 @@ import { shiftDayKey, tzDateKey, tzDayStartUtc } from "../lib/time.js";
 import { hasApprovedLeaveCovering } from "./leave.js";
 import { clearCalendarCache } from "./calendar.js";
 import { clearInsightsCache } from "./insights.js";
-import { joinedStatus } from "./meetingMath.js";
+import { joinedStatus, meetingWindow, secondsInWindow } from "./meetingMath.js";
 import { emitAttendance } from "./meetingSync.js";
 
 /**
@@ -60,11 +60,47 @@ async function meetingRowsOn(guildId: string, userId: string, days: string[]) {
     where: { userId, scheduledStart: { gte: start, lt: end }, meeting: { guildId } },
     select: {
       id: true, meetingId: true, status: true, scheduledStart: true, actualJoinAt: true, leaveStatus: true,
-      minutesLate: true, secondsAttended: true, meeting: { select: { durationMin: true } },
+      minutesLate: true, secondsAttended: true,
+      meeting: { select: { durationMin: true, startAt: true, guildId: true, voiceChannelId: true, status: true } },
     },
   });
   const set = new Set(days);
   return rows.filter((r) => set.has(tzDateKey(r.scheduledStart)));
+}
+
+type MeetingRow = Awaited<ReturnType<typeof meetingRowsOn>>[number];
+
+/**
+ * Status (and seconds) to restore on a joined row whose leave was revoked.
+ * Rows from before Phase 3 (or excused before the end pass) carry
+ * secondsAttended = 0: their time is computed from the voice sessions, as the
+ * end-of-meeting pass does. With no sessions on record there is nothing to
+ * judge by, so the row goes back to present / late — never left_early on 0.
+ * A meeting that is not completed yet also goes back to present / late: its end
+ * pass decides left_early.
+ */
+async function restoredJoined(userId: string, r: MeetingRow): Promise<{ status: string; secondsAttended: number }> {
+  if (r.meeting.status !== "completed") {
+    return { status: r.minutesLate > 0 ? "late" : "present", secondsAttended: r.secondsAttended };
+  }
+  let seconds = r.secondsAttended;
+  if (seconds === 0) {
+    const { start, end } = meetingWindow(r.meeting);
+    const sessions = await prisma.voiceSession.findMany({
+      where: {
+        guildId: r.meeting.guildId,
+        channelId: r.meeting.voiceChannelId,
+        userId,
+        joinedAt: { lt: end },
+        OR: [{ leftAt: null }, { leftAt: { gt: start } }],
+      },
+      select: { joinedAt: true, leftAt: true },
+    });
+    // The meeting is over: an open session counts up to the meeting's end.
+    seconds = secondsInWindow(sessions, start, end, end);
+    if (seconds === 0) return { status: r.minutesLate > 0 ? "late" : "present", secondsAttended: 0 };
+  }
+  return { status: joinedStatus(r.minutesLate, seconds, r.meeting.durationMin), secondsAttended: seconds };
 }
 
 /** A leave decision changed rows of finished meetings: send EMS their attendance again (Phase 3 §3.4). */
@@ -134,10 +170,10 @@ export async function revokeManualLeave(guildId: string, userId: string, leaveId
     for (const r of await meetingRowsOn(guildId, userId, days)) {
       if (r.status !== "excused") continue;
       if (await hasApprovedLeaveCovering(guildId, userId, r.scheduledStart)) continue;
-      const status = r.actualJoinAt ? joinedStatus(r.minutesLate, r.secondsAttended, r.meeting.durationMin) : "absent";
+      const restored = r.actualJoinAt ? await restoredJoined(userId, r) : { status: "absent", secondsAttended: r.secondsAttended };
       await prisma.meetingAttendance.update({
         where: { id: r.id },
-        data: { status, leaveStatus: "none" },
+        data: { status: restored.status, secondsAttended: restored.secondsAttended, leaveStatus: "none" },
       });
       changed.add(r.meetingId);
     }
