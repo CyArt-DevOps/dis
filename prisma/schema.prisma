@@ -100,11 +100,11 @@ model Warn {
   modId     String
   reason    String @db.Text
   createdAt DateTime @default(now())
-  // auto (attendance sweep) | manual (dashboard) | command (/warn)
+  // auto (attendance sweep) | manual (dashboard) | command (/warn) | ems (EMS formal warning mirror)
   source    String   @default("command") @db.VarChar(16)
   // hours (short/absent days) | conduct | other
   kind      String   @default("other") @db.VarChar(16)
-  // proposed (awaiting HR review) | sent | dm-failed | acknowledged | dismissed
+  // proposed (awaiting HR review) | sent | dm-failed | acknowledged | dismissed | revoked
   status    String   @default("sent") @db.VarChar(16)
   // CSV of YYYY-MM-DD days an hours warning covers, so a streak is warned once
   days      String?  @db.Text
@@ -116,6 +116,8 @@ model Warn {
   dmMessageId String? @db.VarChar(32)
   // Verified HR member who sent or dismissed it
   reviewedBy String? @db.VarChar(80)
+  // EMS formal warning uid for source "ems" rows (Phase 4): POST/DELETE /api/v1/warns key on it
+  externalUid String? @unique @db.VarChar(36)
 
   @@index([guildId, userId])
   @@index([guildId, status])
@@ -283,6 +285,13 @@ model WarnNote {
   createdAt DateTime @default(now())
 
   @@index([warnId])
+}
+
+/// Small key/value settings EMS sets through /api/v1 (Phase 4: "autoWarn" switch).
+model BotSetting {
+  key       String   @id @db.VarChar(64)
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
 }
 
 /// Events waiting to be delivered to the EMS portal (signed POST). Retried with
