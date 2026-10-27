@@ -54,6 +54,9 @@ const createSchema = z
     audienceModule: z.number().int().min(1).nullish(),
     audiencePod: z.number().int().min(1).nullish(),
     audienceMemberIds: z.array(discordId).min(1).max(100).nullish(),
+    // people only: drop listed ids that are not in the server instead of a 422
+    // (EMS's automatic ladder meetings, where a Team Lead may have left).
+    allowMissingMembers: z.boolean().optional().default(false),
     mandatory: z.boolean(),
     office: z.enum(["manager", "hr"]).nullish(),
     recurrenceUid: uidSchema.nullish(),
@@ -107,7 +110,11 @@ function voiceChannelFor(guild: Guild, a: {
 
 const isUniqueClash = (e: unknown) => (e as { code?: string })?.code === "P2002";
 
-/** Create. Same uid again → 200 with the stored meeting, never a duplicate. */
+/**
+ * Create. Same uid again → 200 with the stored meeting, never a duplicate.
+ * people + allowMissingMembers: ids not in the server are dropped and echoed as
+ * skippedMemberIds on the 201; if none remain it is still 422 audience_unresolved.
+ */
 meetingsRouter.post("/", async (req, res) => {
   const parsed = createSchema.safeParse(req.body ?? {});
   if (!parsed.success) return invalid(res, parsed.error);
@@ -128,11 +135,22 @@ meetingsRouter.post("/", async (req, res) => {
     audiencePod: b.audiencePod ?? undefined,
   };
   let memberIds: string[] | undefined;
+  let skippedMemberIds: string[] | undefined;
   if (b.audienceType === "people") {
     if (!membersReady()) return fail(res, 503, "member_cache_warming", "The bot is still loading members; try again shortly.");
-    memberIds = [...new Set(b.audienceMemberIds ?? [])];
-    const missing = memberIds.filter((id) => !guild.members.cache.has(id));
-    if (missing.length) return fail(res, 422, "audience_unresolved", "Some people are not in the Discord server.", { missing });
+    const listed = [...new Set(b.audienceMemberIds ?? [])];
+    const missing = listed.filter((id) => !guild.members.cache.has(id));
+    if (missing.length === listed.length) {
+      return fail(res, 422, "audience_unresolved", "None of these people are in the Discord server.", { missing });
+    }
+    if (missing.length && !b.allowMissingMembers) {
+      return fail(res, 422, "audience_unresolved", "Some people are not in the Discord server.", { missing });
+    }
+    memberIds = listed.filter((id) => guild.members.cache.has(id));
+    if (b.allowMissingMembers) {
+      skippedMemberIds = missing;
+      if (missing.length) logger.info({ uid: b.uid, skipped: missing }, "v1 meeting: skipped people not in the server");
+    }
   } else if (!resolveAudienceRole(guild, audience as ScheduleArgs)) {
     return fail(res, 422, "audience_unresolved", "No Discord role matches this audience.");
   }
@@ -166,7 +184,7 @@ meetingsRouter.post("/", async (req, res) => {
       recurrenceUid: b.recurrenceUid ?? undefined,
       updatedAt: b.updatedAt ?? undefined,
     });
-    return res.status(201).json(meetingDto(m));
+    return res.status(201).json(skippedMemberIds ? { ...meetingDto(m), skippedMemberIds } : meetingDto(m));
   } catch (err) {
     if (isUniqueClash(err)) {
       const again = await prisma.meeting.findUnique({ where: { uid: b.uid } });

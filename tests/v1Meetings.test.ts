@@ -117,6 +117,40 @@ describe("POST /meetings", () => {
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ error: "audience_unresolved", missing: ["100000000000000003"] });
   });
+  it("allowMissingMembers: false is the strict default (422, nothing scheduled)", async () => {
+    meetingFindUnique.mockResolvedValue(null);
+    const res = await send("POST", "", createBody({ audienceType: "people", audienceProject: null, allowMissingMembers: false, audienceMemberIds: ["100000000000000002", "100000000000000003"] }));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: "audience_unresolved", missing: ["100000000000000003"] });
+    expect(scheduleMeeting).not.toHaveBeenCalled();
+  });
+  it("allowMissingMembers drops people not in the server and returns skippedMemberIds", async () => {
+    meetingFindUnique.mockResolvedValue(null);
+    scheduleMeeting.mockResolvedValue(row({ audienceType: "people", audienceMemberIds: "100000000000000002" }));
+    const res = await send("POST", "", createBody({
+      audienceType: "people", audienceProject: null, allowMissingMembers: true,
+      audienceMemberIds: ["100000000000000003", "100000000000000002", "100000000000000004"],
+    }));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.uid).toBe(UID);
+    expect(body.skippedMemberIds).toEqual(["100000000000000003", "100000000000000004"]);
+    expect(scheduleMeeting.mock.calls[0]![0]).toMatchObject({ audienceMemberIds: "100000000000000002" });
+  });
+  it("allowMissingMembers with nobody in the server is still 422 audience_unresolved", async () => {
+    meetingFindUnique.mockResolvedValue(null);
+    const res = await send("POST", "", createBody({ audienceType: "people", audienceProject: null, allowMissingMembers: true, audienceMemberIds: ["100000000000000003"] }));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: "audience_unresolved", missing: ["100000000000000003"] });
+    expect(scheduleMeeting).not.toHaveBeenCalled();
+  });
+  it("allowMissingMembers still answers 503 while the member cache warms", async () => {
+    meetingFindUnique.mockResolvedValue(null);
+    ready = false;
+    const res = await send("POST", "", createBody({ audienceType: "people", audienceProject: null, allowMissingMembers: true, audienceMemberIds: ["100000000000000002"] }));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toBe("member_cache_warming");
+  });
   it("people meetings use the office VC and pass the office", async () => {
     meetingFindUnique.mockResolvedValue(null);
     scheduleMeeting.mockResolvedValue(row({ audienceType: "people" }));
