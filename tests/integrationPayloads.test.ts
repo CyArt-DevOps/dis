@@ -38,6 +38,11 @@ describe("projectKeyOf", () => {
     expect(projectKeyOf("Gone Project", projects)).toBeNull();
     expect(projectKeyOf(null, projects)).toBeNull();
   });
+  it("ignores case and surrounding whitespace", () => {
+    expect(projectKeyOf("  darktrace ", projects)).toBe("dt");
+    expect(projectKeyOf("DT", projects)).toBe("dt");
+    expect(projectKeyOf("   ", projects)).toBeNull();
+  });
 });
 
 describe("orgDto", () => {

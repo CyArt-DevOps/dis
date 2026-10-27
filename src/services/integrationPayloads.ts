@@ -41,11 +41,21 @@ export function leadershipFromRoleNames(names: string[], projects: ProjectLike[]
 /**
  * Member.project stores the project's display name (onboarding writes p.name),
  * but EMS keys projects by `key`. Accept either, return the key (null if the
- * project no longer exists in org.json).
+ * project no longer exists in org.json). Case and surrounding whitespace are ignored.
  */
-export function projectKeyOf(value: string | null, projects: ProjectLike[]): string | null {
+export function projectKeyOf(value: string | null, projects: Pick<ProjectDef, "key" | "name">[]): string | null {
   if (!value) return null;
-  return projects.find((p) => p.key === value || p.name === value)?.key ?? null;
+  const exact = projects.find((p) => p.key === value || p.name === value);
+  if (exact) return exact.key;
+  // Hand-edited rows and older onboarding wrote names with stray case/whitespace.
+  const v = normProject(value);
+  if (!v) return null;
+  return projects.find((p) => normProject(p.key) === v || normProject(p.name) === v)?.key ?? null;
+}
+
+/** Trimmed, lower-case form used to compare project keys and names. */
+export function normProject(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 export function memberDto(

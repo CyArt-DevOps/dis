@@ -58,8 +58,11 @@ export const warn: SlashCommand = {
     }
 
     if (clear) {
-      const n = await clearWarns(interaction.guildId!, user.id);
-      await interaction.reply({ content: `Cleared ${n} warn(s).`, flags: MessageFlags.Ephemeral });
+      const { cleared, kept } = await clearWarns(interaction.guildId!, user.id);
+      const note = kept
+        ? ` Kept ${kept} EMS-issued warning(s): revoke or excuse those in EMS.`
+        : "";
+      await interaction.reply({ content: `Cleared ${cleared} warn(s).${note}`, flags: MessageFlags.Ephemeral });
       return;
     }
 

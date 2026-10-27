@@ -34,6 +34,9 @@ import { autoWarnOff, getAutoWarn } from "./autoWarn.js";
  */
 
 const ACK_PREFIX = "warn:ack:";
+/** Warns mirrored from EMS (source "ems") are withdrawn in EMS, which then revokes the mirror. */
+export const EMS_MANAGED_MSG = "This warning was issued in EMS. Revoke or excuse it in EMS; the bot's copy updates automatically.";
+
 const STRIKE_STATUSES = ["sent", "dm-failed", "acknowledged"];
 
 export class WarningError extends Error {}
@@ -147,8 +150,26 @@ export async function runHoursSweep(guildId: string): Promise<SweepResult> {
   }
 
   if (c.mode === "strict" && botClient()) {
-    for (const cand of await terminationCandidates(guildId)) {
+    const candidates = await terminationCandidates(guildId);
+    // Defence in depth: anyone EMS has formally warned is EMS-managed, whatever
+    // their Member.project says (renamed/hand-edited project, switch not yet set).
+    // Termination is never automatic for them.
+    const emsWarned = candidates.length
+      ? new Set(
+          (
+            await prisma.warn.findMany({
+              where: { guildId, userId: { in: candidates.map((x) => x.userId) }, source: "ems" },
+              select: { userId: true },
+            })
+          ).map((w) => w.userId)
+        )
+      : new Set<string>();
+    for (const cand of candidates) {
       if (autoWarnOff(autoWarn, cand.project, org.projects)) continue; // EMS recommends; a person decides
+      if (emsWarned.has(cand.userId)) {
+        logger.warn({ userId: cand.userId, project: cand.project }, "Automatic termination skipped: member has EMS-mirrored warnings (EMS decides)");
+        continue;
+      }
       await terminateMember(guildId, cand.userId, "Attendance system (strict mode)").catch((err) =>
         logger.error({ err, userId: cand.userId }, "Automatic termination failed")
       );
@@ -264,6 +285,7 @@ export async function createManualWarning(
 export async function dismissWarning(id: number, guildId: string, reviewedBy: string): Promise<void> {
   const w = await prisma.warn.findUnique({ where: { id } });
   if (!w || w.guildId !== guildId) throw new WarningError("Warning not found.");
+  if (w.source === "ems") throw new WarningError(EMS_MANAGED_MSG);
   await prisma.warn.update({ where: { id }, data: { status: "dismissed", reviewedBy } });
 }
 
@@ -526,6 +548,7 @@ export async function revokeWarning(
 ): Promise<{ notified: boolean }> {
   const w = await prisma.warn.findUnique({ where: { id } });
   if (!w || w.guildId !== guildId) throw new WarningError("Warning not found.");
+  if (w.source === "ems") throw new WarningError(EMS_MANAGED_MSG);
   if (w.status === "revoked" || w.status === "dismissed") throw new WarningError("This warning is already withdrawn.");
   const why = String(reason ?? "").trim();
   if (why.length < 3 || why.length > 1000) throw new WarningError("Give a reason for revoking (3–1000 characters).");

@@ -34,6 +34,12 @@ describe("autoWarnOff", () => {
     expect(autoWarnOff(s, "Beta", projects)).toBe(false);
     expect(autoWarnOff(s, null, projects)).toBe(false);
   });
+  it("ignores case and surrounding whitespace in the stored project and the disabled keys", () => {
+    expect(autoWarnOff({ disabledProjects: ["alpha"] }, "  alpha project ", projects)).toBe(true);
+    expect(autoWarnOff({ disabledProjects: ["alpha"] }, "ALPHA", projects)).toBe(true);
+    expect(autoWarnOff({ disabledProjects: [" Alpha "] }, "Alpha Project", projects)).toBe(true);
+    expect(autoWarnOff({ disabledProjects: ["alpha"] }, " beta ", projects)).toBe(false);
+  });
   it("'all' covers everyone, an empty list no one", () => {
     expect(autoWarnOff({ disabledProjects: "all" }, null, projects)).toBe(true);
     expect(autoWarnOff({ disabledProjects: [] }, "alpha", projects)).toBe(false);

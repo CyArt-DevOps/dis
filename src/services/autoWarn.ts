@@ -1,4 +1,5 @@
 import { prisma } from "../core/db.js";
+import { normProject, projectKeyOf } from "./integrationPayloads.js";
 
 /**
  * The bot's own automatic warnings — the hours-warning sweep (warnings.ts, source
@@ -38,13 +39,16 @@ export function parseAutoWarn(raw: string | null | undefined): AutoWarnSetting {
 
 /**
  * Pure. True when the bot must not auto-warn / escalate a member of `project`
- * (Member.project holds the project key or name). "all" covers every member.
+ * (Member.project holds the project key or name; case and whitespace are ignored).
+ * "all" covers every member.
  */
 export function autoWarnOff(setting: AutoWarnSetting, project: string | null, projects: { key: string; name: string }[]): boolean {
   if (setting.disabledProjects === "all") return true;
   if (!project) return false;
-  const key = projects.find((p) => p.key === project || p.name === project)?.key ?? null;
-  return key !== null && setting.disabledProjects.includes(key);
+  const key = projectKeyOf(project, projects);
+  if (key === null) return false;
+  const k = normProject(key);
+  return setting.disabledProjects.some((d) => normProject(d) === k);
 }
 
 /** Current setting, cached for a minute (the sweep runs every 30 min, escalations after each meeting). */

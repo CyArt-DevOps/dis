@@ -8,6 +8,7 @@ import {
 } from "discord.js";
 import { CONFIG_PATH, org, type OrgConfig, type ProjectDef } from "../config/loader.js";
 import { logger } from "../core/logger.js";
+import { prisma } from "../core/db.js";
 import { channelNames, moduleShort, roleNames } from "../lib/names.js";
 import { bootstrapServer } from "./bootstrap.js";
 import { syncGuildCommands } from "./commandSync.js";
@@ -141,6 +142,13 @@ export async function renameProject(
 
   org.projects[idx] = updated;
   persistOrg(org);
+  // Member.project stores the display name (onboarding writes p.name). Left alone,
+  // every intern of the renamed project would stop resolving to its key — and so
+  // drop out of EMS's auto-warn switch, back under the bot's own auto-warnings.
+  if (old.name !== newName) {
+    const moved = await prisma.member.updateMany({ where: { project: old.name }, data: { project: newName } });
+    logger.info({ project: key, members: moved.count }, "Member project names updated");
+  }
   logger.info({ project: key, from: old.name, to: newName }, "Project renamed");
   await refreshCommands();
 }
