@@ -16,6 +16,7 @@ import { buildCalendars } from "./calendar.js";
 import { shortStreak } from "../lib/streak.js";
 import type { InteractionHandler } from "../core/registry.js";
 import { notifyMember } from "./notify.js";
+import { autoWarnOff, getAutoWarn } from "./autoWarn.js";
 
 /**
  * Formal warnings and the three-strike rule.
@@ -27,6 +28,9 @@ import { notifyMember } from "./notify.js";
  * warning is a DM with an Acknowledge button and a deadline. Warnings that were
  * sent (acknowledged or not) count as strikes; reaching the limit puts the
  * member up for termination: reviewed by HR, or automatic in "strict" mode.
+ *
+ * Members of projects the EMS strictness ladder runs live (autoWarn.ts) get no
+ * automatic hours warnings and no automatic termination from here (Phase 4 §8).
  */
 
 const ACK_PREFIX = "warn:ack:";
@@ -74,6 +78,8 @@ export interface SweepResult {
   created: number;
   sent: number;
   terminated: number;
+  /** Members skipped because EMS's strictness ladder handles their project. */
+  emsManaged: number;
 }
 
 export async function runHoursSweep(guildId: string): Promise<SweepResult> {
@@ -83,8 +89,9 @@ export async function runHoursSweep(guildId: string): Promise<SweepResult> {
     .filter((d): d is string => Boolean(d))
     .sort()
     .pop()!;
-  const out: SweepResult = { checked: 0, created: 0, sent: 0, terminated: 0 };
+  const out: SweepResult = { checked: 0, created: 0, sent: 0, terminated: 0, emsManaged: 0 };
   if (start > settled) return out;
+  const autoWarn = await getAutoWarn();
 
   const required = Math.round(org.attendancePolicy.minHours * 3600);
   const [calendars, existing] = await Promise.all([
@@ -103,6 +110,10 @@ export async function runHoursSweep(guildId: string): Promise<SweepResult> {
 
   for (const cal of calendars) {
     if (!cal.project) continue; // unregistered accounts aren't interns yet
+    if (autoWarnOff(autoWarn, cal.project, org.projects)) {
+      out.emsManaged++;
+      continue;
+    }
     out.checked++;
     const streak = shortStreak(cal.days, {
       settled,
@@ -137,6 +148,7 @@ export async function runHoursSweep(guildId: string): Promise<SweepResult> {
 
   if (c.mode === "strict" && botClient()) {
     for (const cand of await terminationCandidates(guildId)) {
+      if (autoWarnOff(autoWarn, cand.project, org.projects)) continue; // EMS recommends; a person decides
       await terminateMember(guildId, cand.userId, "Attendance system (strict mode)").catch((err) =>
         logger.error({ err, userId: cand.userId }, "Automatic termination failed")
       );
