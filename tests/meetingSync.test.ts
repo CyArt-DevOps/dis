@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Collection, type Guild } from "discord.js";
 
 vi.mock("../src/core/logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
@@ -23,7 +23,8 @@ vi.mock("../src/core/db.js", () => ({
 vi.mock("../src/services/meeting.js", () => ({ getOfficeVoiceChannel: () => undefined, officeOfVoiceChannel: () => null }));
 
 const { meetingDto, attendanceRows, emitAttendance } = await import("../src/services/meetingSync.js");
-const { scheduleMeeting, cancelMeeting, transitionStatus, sweep, setMeetingHooks } = await import("../src/services/meetingScheduler.js");
+const { scheduleMeeting, cancelMeeting, transitionStatus, sweep, setMeetingHooks, resetFinalizeFailuresForTests } = await import("../src/services/meetingScheduler.js");
+const { logger } = await import("../src/core/logger.js");
 
 const base = {
   id: 7, guildId: "g1", title: "Standup", description: null, organizerId: "100000000000000001",
@@ -188,6 +189,60 @@ describe("sweep", () => {
     await sweep(clientWith(guild));
     expect(meetingUpdateMany).not.toHaveBeenCalled();
     expect(hooks.onEnd).not.toHaveBeenCalled();
+  });
+
+  describe("finalize failure cap", () => {
+    // 30-min meeting + 10-min window: ends 40 min after start.
+    const start = new Date("2026-10-27T10:00:00Z").getTime();
+    const endMs = start + 40 * 60_000;
+    const m = { ...base, status: "monitoring", remindersSent: "24h,1h,15m,5m,start", startAt: new Date(start) };
+    let now = endMs;
+    beforeEach(() => {
+      resetFinalizeFailuresForTests();
+      now = endMs;
+      vi.spyOn(Date, "now").mockImplementation(() => now);
+      meetingFindMany.mockResolvedValue([m]);
+      meetingUpdateMany.mockResolvedValue({ count: 1 });
+      meetingFindUnique.mockResolvedValue({ ...m, status: "completed" });
+      vi.mocked(logger.error).mockClear();
+    });
+    afterEach(() => vi.restoreAllMocks());
+    const pass = async (atMs: number) => { now = atMs; await sweep(clientWith(guild)); };
+
+    it("keeps retrying before end + 15 min even after many failures", async () => {
+      hooks.onFinalize.mockRejectedValue(new Error("db down"));
+      for (let i = 0; i < 10; i++) await pass(endMs + i * 30_000); // up to end + 4.5 min
+      expect(meetingUpdateMany).not.toHaveBeenCalled();
+      expect(hooks.onEnd).not.toHaveBeenCalled();
+    });
+    it("keeps retrying past end + 15 min until 5 attempts have failed", async () => {
+      hooks.onFinalize.mockRejectedValue(new Error("db down"));
+      for (let i = 0; i < 4; i++) await pass(endMs + 20 * 60_000 + i * 30_000);
+      expect(meetingUpdateMany).not.toHaveBeenCalled();
+    });
+    it("after end + 15 min and 5 failures: one escalation error, then completed + onEnd with stored rows", async () => {
+      hooks.onFinalize.mockRejectedValue(new Error("db down"));
+      for (let i = 0; i < 5; i++) await pass(endMs + i * 4 * 60_000); // 5th failure at end + 16 min
+      expect(hooks.onFinalize).toHaveBeenCalledTimes(5);
+      expect(meetingUpdateMany).toHaveBeenCalledTimes(1);
+      expect(meetingUpdateMany.mock.calls[0]![0]).toMatchObject({ data: { status: "completed" } });
+      expect(hooks.onEnd).toHaveBeenCalledTimes(1);
+      const escalations = vi.mocked(logger.error).mock.calls.filter((c) => String(c[1]).includes("giving up"));
+      expect(escalations).toHaveLength(1);
+      expect(escalations[0]![0]).toMatchObject({ meeting: 7, failures: 5 });
+    });
+    it("a success resets the counter", async () => {
+      hooks.onFinalize.mockRejectedValue(new Error("db down"));
+      for (let i = 0; i < 4; i++) await pass(endMs + i * 30_000);
+      meetingUpdateMany.mockResolvedValueOnce({ count: 0 }); // finalize ok, but the status write lost a race
+      hooks.onFinalize.mockResolvedValueOnce(undefined);
+      await pass(endMs + 5 * 60_000);
+      // Fresh streak: 4 more failures well past end + 15 min must not give up.
+      meetingUpdateMany.mockClear();
+      for (let i = 0; i < 4; i++) await pass(endMs + 30 * 60_000 + i * 30_000);
+      expect(meetingUpdateMany).not.toHaveBeenCalled();
+      expect(hooks.onEnd).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -20,6 +20,7 @@ import { placeNames } from "../lib/names.js";
 import type { Meeting } from "@prisma/client";
 import { ticketsCategoryWithRoom } from "./ticketCategory.js";
 import { emitMeetingEvent } from "./meetingSync.js";
+import { attendanceReportsChannel } from "./leave.js";
 
 let client: Client | null = null;
 let sweepTimer: NodeJS.Timeout | null = null;
@@ -47,6 +48,46 @@ export function setMeetingHooks(hooks: {
   if (hooks.onEnd) onMeetingEnd = hooks.onEnd;
   if (hooks.onTick) onMeetingTick = hooks.onTick;
   if (hooks.onFinalize) onMeetingFinalize = hooks.onFinalize;
+}
+
+/**
+ * Finalize-failure cap. A meeting whose onFinalize keeps throwing would stay
+ * `monitoring` forever. Once it is FINALIZE_GRACE_MS past its end (and past the
+ * first failure) with at least FINALIZE_MAX_FAILURES failed attempts, the sweep
+ * escalates once and completes it with whatever rows are stored. In memory only:
+ * a process restart starts the count again, which just means more retries.
+ */
+export const FINALIZE_MAX_FAILURES = 5;
+export const FINALIZE_GRACE_MS = 15 * 60_000;
+const finalizeFailures = new Map<number, { count: number; firstAt: number }>();
+
+/** Test helper: forget all finalize failure counts. */
+export function resetFinalizeFailuresForTests(): void {
+  finalizeFailures.clear();
+}
+
+/** Record one failed finalize; true when the meeting should complete without it. */
+function finalizeShouldGiveUp(id: number, now: number, endMs: number): boolean {
+  const f = finalizeFailures.get(id) ?? { count: 0, firstAt: now };
+  f.count++;
+  finalizeFailures.set(id, f);
+  return f.count >= FINALIZE_MAX_FAILURES && now >= Math.max(endMs, f.firstAt) + FINALIZE_GRACE_MS;
+}
+
+async function escalateFinalizeGiveUp(guild: Guild, m: Meeting, err: unknown): Promise<void> {
+  const f = finalizeFailures.get(m.id);
+  logger.error(
+    { err, meeting: m.id, title: m.title, failures: f?.count, firstFailureAt: f ? new Date(f.firstAt) : undefined },
+    "Attendance finalize keeps failing; giving up and completing the meeting with the stored attendance rows (seconds attended and left-early not computed)"
+  );
+  const ch = attendanceReportsChannel(guild);
+  if (!ch) return;
+  await ch
+    .send(
+      `⚠️ Attendance for **${m.title}** (meeting #${m.id}) could not be finalized after ${f?.count ?? FINALIZE_MAX_FAILURES} attempts. ` +
+        "It has been completed with the attendance recorded so far; time attended and early leavers were not computed. Please review it manually."
+    )
+    .catch((e) => logger.warn({ err: e, meeting: m.id }, "Could not post the finalize escalation"));
 }
 
 export const REMINDER_OFFSETS: { key: string; ms: number; label: string }[] = [
@@ -657,9 +698,16 @@ export async function sweep(c: Client | null = client): Promise<void> {
     if (cur.status === "monitoring" && now >= endMs) {
       try {
         await onMeetingFinalize(cur);
+        finalizeFailures.delete(m.id);
       } catch (err) {
-        logger.error({ err, meeting: m.id }, "Attendance finalize failed; retrying next sweep");
-        continue;
+        if (!finalizeShouldGiveUp(m.id, now, endMs)) {
+          logger.error({ err, meeting: m.id }, "Attendance finalize failed; retrying next sweep");
+          continue;
+        }
+        // Best effort from here: complete with the stored rows so the report
+        // and meeting.attendance still go out.
+        await escalateFinalizeGiveUp(guild, cur, err).catch(() => {});
+        finalizeFailures.delete(m.id);
       }
       const fresh = await transitionStatus(cur, "completed");
       if (!fresh) continue;
@@ -668,6 +716,10 @@ export async function sweep(c: Client | null = client): Promise<void> {
       );
     }
   }
+
+  // Drop failure counts for meetings no longer active (cancelled, completed elsewhere).
+  const activeIds = new Set(meetings.map((x) => x.id));
+  for (const id of finalizeFailures.keys()) if (!activeIds.has(id)) finalizeFailures.delete(id);
 
   // Self-heal any leftovers from failed revokes/deletes on earlier meetings.
   await cleanupMeetingOrphans(meetings).catch((err) =>
