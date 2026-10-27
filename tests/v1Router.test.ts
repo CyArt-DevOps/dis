@@ -53,6 +53,12 @@ const row = {
 };
 
 describe("v1Router", () => {
+  it("/health reports when this process started (EMS outage guard)", async () => {
+    const body = await (await fetch(`${base}/health`, { headers: auth })).json();
+    expect(body.ok).toBe(true);
+    expect(Date.parse(body.startedAt)).toBeLessThanOrEqual(Date.now());
+    expect(Date.parse(body.startedAt)).toBeGreaterThan(Date.now() - 3600_000);
+  });
   it("401s without a key", async () => {
     expect((await fetch(`${base}/org`)).status).toBe(401);
   });

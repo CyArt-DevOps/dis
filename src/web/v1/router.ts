@@ -10,6 +10,7 @@ import { leadershipFromRoleNames, memberDto, orgDto, projectKeyOf } from "../../
 import { shiftDayKey, tzDayStartUtc } from "../../lib/time.js";
 import { assignedChannelIds, indexChannels, voiceDay, type ChannelLite } from "../../services/assignedVoice.js";
 import { meetingsRouter } from "./meetings.js";
+import { ladderRouter } from "./ladder.js";
 
 /**
  * Read API for the EMS portal. Bearer DIS_API_KEY; no cookie. Mounted ahead of
@@ -19,12 +20,16 @@ export const v1Router = express.Router();
 v1Router.use(apiKeyGuard(() => env.DIS_API_KEY));
 
 const isDay = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+/** When this process started: EMS treats a restart during a day as possible voice-data loss (Phase 4 §3.3). */
+const STARTED_AT = new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString();
 
 // Meetings synced with EMS (Phase 3): create / edit / cancel / catch-up / attendance.
 v1Router.use("/meetings", meetingsRouter);
+// Strictness ladder (Phase 4): /dm, /settings/auto-warn, /warns.
+v1Router.use(ladderRouter);
 
 v1Router.get("/health", (_req, res) => {
-  res.json({ ok: true, botOnline: botGuild(env.DISCORD_GUILD_ID) !== null, now: new Date().toISOString() });
+  res.json({ ok: true, botOnline: botGuild(env.DISCORD_GUILD_ID) !== null, now: new Date().toISOString(), startedAt: STARTED_AT });
 });
 
 /** All members (or those changed since `?updatedSince=ISO`), with leadership from live roles. */
