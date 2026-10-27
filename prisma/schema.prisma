@@ -187,11 +187,17 @@ model Meeting {
   remindersSent   String   @default("") @db.VarChar(500)
   status          String   @default("scheduled") // scheduled | monitoring | completed | cancelled
   createdAt       DateTime @default(now())
+  // EMS sync (Phase 3). One uid per meeting in both systems; latest updatedAt wins.
+  uid             String   @unique @default(uuid()) @db.VarChar(36)
+  source          String   @default("dis") @db.VarChar(8) // dis | ems
+  updatedAt       DateTime @default(now()) @updatedAt
+  recurrenceUid   String?  @db.VarChar(36) // EMS recurrence rule, for EMS-made instances
 
   attendance MeetingAttendance[]
 
   @@index([guildId, status])
   @@index([startAt])
+  @@index([updatedAt])
 }
 
 model MeetingAttendance {
@@ -206,8 +212,9 @@ model MeetingAttendance {
   scheduledStart DateTime
   actualJoinAt  DateTime?
   leaveStatus   String?  // none | approved
-  status        String   // present | late | absent | excused
+  status        String   // present | late | left_early | absent | excused
   minutesLate   Int      @default(0)
+  secondsAttended Int    @default(0) // time in the meeting VC within [startAt, startAt + durationMin]
   createdAt     DateTime @default(now())
 
   meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
