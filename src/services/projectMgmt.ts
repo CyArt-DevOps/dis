@@ -92,6 +92,7 @@ export async function createProject(
   guild: Guild,
   input: NewProject
 ): Promise<void> {
+  input = { ...input, key: input.key.toLowerCase() };
   if (org.projects.some((p) => p.key === input.key)) {
     throw new Error(`Project key '${input.key}' already exists`);
   }
