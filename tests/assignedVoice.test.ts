@@ -80,4 +80,7 @@ describe("meetingVoiceChannelId (EMS-made meetings, Phase 3)", () => {
     expect(meetingVoiceChannelId(idx, PROJECTS, { ...a("project"), audienceProject: "nope" })).toBeNull();
     expect(meetingVoiceChannelId(idx, PROJECTS, a("org"))).toBeNull();
   });
+  it("matches a key EMS still holds in older mixed case (keys are lowercased on load)", () => {
+    expect(meetingVoiceChannelId(idx, PROJECTS, { ...a("project"), audienceProject: " Alpha " })).toBe("v-gen");
+  });
 });

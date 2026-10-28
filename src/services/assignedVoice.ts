@@ -81,7 +81,9 @@ export function meetingVoiceChannelId(
   projects: ProjectLike[],
   a: { audienceType: string; audienceProject: string | null; audienceModule: number | null; audiencePod: number | null }
 ): string | null {
-  const p = projects.find((x) => x.key === a.audienceProject) as ProjectDef | undefined;
+  // Keys are lowercased on load; EMS may still send a key it stored before that.
+  const want = a.audienceProject?.trim().toLowerCase();
+  const p = projects.find((x) => x.key === want) as ProjectDef | undefined;
   if (!p) return null;
   let ids: string[] = [];
   if (a.audienceType === "project") ids = voiceUnder(idx, placeNames.projectCategory(p), placeNames.projectGeneralVc(p));
