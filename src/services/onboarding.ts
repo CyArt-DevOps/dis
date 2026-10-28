@@ -295,7 +295,7 @@ export async function assignRoles(
     id: member.id,
     fullName,
     batch: a.batch,
-    project: a.projectKey,
+    project: p.key, // the loaded (lowercase) key, not whatever an open menu carried
     module: a.moduleNum ?? null,
     pod: a.podNum ?? null,
   });
