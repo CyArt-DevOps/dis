@@ -4,7 +4,9 @@ import { dirname, resolve } from "node:path";
 import { z } from "zod";
 
 const projectSchema = z.object({
-  key: z.string().min(1),
+  // Lowercased because the key prefixes channel names, which Discord always
+  // stores lowercase: "Op-Sour" would never match "op-sour-m1-p1-chat".
+  key: z.string().min(1).transform((k) => k.toLowerCase()),
   name: z.string().min(1),
   modules: z.number().int().nonnegative(),
   podsPerModule: z.number().int().nonnegative(),
@@ -156,5 +158,5 @@ export function activeProjects(): ProjectDef[] {
 }
 
 export function findProject(key: string): ProjectDef | undefined {
-  return org.projects.find((p) => p.key === key);
+  return org.projects.find((p) => p.key === key.toLowerCase());
 }

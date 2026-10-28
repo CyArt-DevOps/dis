@@ -130,12 +130,25 @@ export async function postHoursDigest(guild: Guild, day = tzDateKey(new Date()))
               : null
           )
       );
-      await g.channel
-        .send({ embeds })
-        .then(() => {
-          posted++;
-        })
-        .catch((err) => logger.warn({ err, channel: g.channel.name }, "Hours digest post failed"));
+      // A message's embeds share a 6000-character total, so a big group needs
+      // several messages; one send with every embed would be rejected outright.
+      const batches: EmbedBuilder[][] = [];
+      let size = 0;
+      for (const e of embeds) {
+        const len = (e.data.title?.length ?? 0) + (e.data.description?.length ?? 0) + (e.data.footer?.text.length ?? 0);
+        if (!batches.length || size + len > 5800) {
+          batches.push([]);
+          size = 0;
+        }
+        batches[batches.length - 1]!.push(e);
+        size += len;
+      }
+      try {
+        for (const batch of batches) await g.channel.send({ embeds: batch });
+        posted++;
+      } catch (err) {
+        logger.warn({ err, channel: g.channel.name }, "Hours digest post failed");
+      }
     }
   }
   logger.info({ day, posted }, "Daily hours digest posted");

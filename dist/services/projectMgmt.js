@@ -71,6 +71,7 @@ function writeBackup(name, data) {
     return file;
 }
 export async function createProject(guild, input) {
+    input = { ...input, key: input.key.toLowerCase() };
     if (org.projects.some((p) => p.key === input.key)) {
         throw new Error(`Project key '${input.key}' already exists`);
     }

@@ -143,7 +143,7 @@
       "moduleVoice": false
     },
     {
-      "key": "Op-Sour",
+      "key": "op-sour",
       "name": "Op Sour",
       "modules": 2,
       "podsPerModule": 10,

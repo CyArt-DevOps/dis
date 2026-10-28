@@ -124,12 +124,27 @@ export async function postHoursDigest(guild, day = tzDateKey(new Date())) {
                 .setFooter(i === chunks.length - 1
                 ? { text: `${dateLabel} · ${met} of ${g.rows.length} met the ${p.minHours}h target · ${absent} not joined · join by ${p.loginBy}. Type /hours to check yours privately.` }
                 : null));
-            await g.channel
-                .send({ embeds })
-                .then(() => {
+            // A message's embeds share a 6000-character total, so a big group needs
+            // several messages; one send with every embed would be rejected outright.
+            const batches = [];
+            let size = 0;
+            for (const e of embeds) {
+                const len = (e.data.title?.length ?? 0) + (e.data.description?.length ?? 0) + (e.data.footer?.text.length ?? 0);
+                if (!batches.length || size + len > 5800) {
+                    batches.push([]);
+                    size = 0;
+                }
+                batches[batches.length - 1].push(e);
+                size += len;
+            }
+            try {
+                for (const batch of batches)
+                    await g.channel.send({ embeds: batch });
                 posted++;
-            })
-                .catch((err) => logger.warn({ err, channel: g.channel.name }, "Hours digest post failed"));
+            }
+            catch (err) {
+                logger.warn({ err, channel: g.channel.name }, "Hours digest post failed");
+            }
         }
     }
     logger.info({ day, posted }, "Daily hours digest posted");
