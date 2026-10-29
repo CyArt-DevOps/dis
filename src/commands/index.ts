@@ -3,6 +3,7 @@ import { ping } from "./ping.js";
 import { setup } from "./setup.js";
 import { lead } from "./lead.js";
 import { colead } from "./colead.js";
+import { rep } from "./rep.js";
 import { announce } from "./announce.js";
 import { moderationCommands } from "./moderation.js";
 import { project } from "./project.js";
@@ -21,6 +22,7 @@ export function registerAllCommands(): void {
   registry.registerCommand(setup);
   registry.registerCommand(lead);
   registry.registerCommand(colead);
+  registry.registerCommand(rep);
   registry.registerCommand(announce);
   registry.registerCommand(project);
   registry.registerCommand(ticket);
