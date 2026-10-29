@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { moduleLabel, moduleShort, roleNames, placeNames, podRepRoleNames } from "../src/lib/names.js";
+import { moduleLabel, moduleShort, roleNames, placeNames, podRepRoleNames, legacyPodRep } from "../src/lib/names.js";
 import type { ProjectDef } from "../src/config/loader.js";
 
 const plain: ProjectDef = {
@@ -19,9 +19,23 @@ const named: ProjectDef = {
 };
 
 describe("roleNames.podRep (Phase 6)", () => {
-  it("uses the short module form, like the pod VC (PR-BOT-09)", () => {
+  it("is always numeric, even for a custom-named module (PR-BOT-09, Phase 6b)", () => {
     expect(roleNames.podRep(named, 1, 2)).toBe("CyBreach M1 P2 Representative");
-    expect(roleNames.podRep(named, 5, 3)).toBe("CyBreach Team Velocity P3 Representative");
+    expect(roleNames.podRep(named, 5, 3)).toBe("CyBreach M5 P3 Representative");
+    // The pod VC keeps the custom module label.
+    expect(placeNames.podVc(named, 5, 3)).toBe("CyBreach Team Velocity P3 VC");
+  });
+  it("legacyPodRep is the old custom-label form (used only for migration)", () => {
+    expect(legacyPodRep(named, 5, 3)).toBe("CyBreach Team Velocity P3 Representative");
+    expect(legacyPodRep(named, 1, 2)).toBe("CyBreach M1 P2 Representative");
+  });
+  it("caps at 100 chars and keeps the M/P suffix so pods stay distinct (M5)", () => {
+    const long: ProjectDef = { ...plain, name: "X".repeat(120) };
+    const a = roleNames.podRep(long, 1, 2);
+    const b = roleNames.podRep(long, 1, 3);
+    expect(a.length).toBeLessThanOrEqual(100);
+    expect(a.endsWith(" M1 P2 Representative")).toBe(true);
+    expect(a).not.toBe(b);
   });
   it("lists one rep role per pod and none for a project without modules (PR-BOT-09/10)", () => {
     const twoByTwo: ProjectDef = { ...plain, key: "dt", name: "DarkTrace", modules: 2, podsPerModule: 2 };

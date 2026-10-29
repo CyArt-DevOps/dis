@@ -20,10 +20,29 @@ export const roleNames = {
   module: (p: ProjectDef, mod: number) => `${p.name} ${moduleLabel(p, mod)}`,
   pod: (p: ProjectDef, mod: number, pod: number) =>
     `${p.name} ${moduleLabel(p, mod)} Pod ${pod}`,
-  /** Phase 6: one per pod, same short module form as the pod VC ("CyBreach M1 P2 Representative"). */
-  podRep: (p: ProjectDef, mod: number, pod: number) =>
-    `${p.name} ${moduleShort(p, mod)} P${pod} Representative`,
+  /**
+   * Phase 6 / 6b: one per pod, always numeric ("CyBreach M5 P2 Representative") even when the
+   * module has a custom name. Capped at Discord's 100 chars, trimming the project part so the
+   * " M<m> P<n> Representative" suffix (what makes pods distinct) survives.
+   */
+  podRep: (p: ProjectDef, mod: number, pod: number) => {
+    const suffix = ` M${mod} P${pod} Representative`;
+    return `${p.name.slice(0, Math.max(0, ROLE_NAME_MAX - suffix.length))}${suffix}`;
+  },
 };
+
+/** Discord's maximum role-name length. */
+export const ROLE_NAME_MAX = 100;
+
+/** Clamp any role name to Discord's limit. */
+export const capRoleName = (name: string): string => name.slice(0, ROLE_NAME_MAX);
+
+/**
+ * Pre-6b rep role name, which used the custom module label ("CyBreach Team Velocity P2
+ * Representative"). Only for migrating / pruning old roles; never created or detected.
+ */
+export const legacyPodRep = (p: ProjectDef, mod: number, pod: number): string =>
+  capRoleName(`${p.name} ${moduleShort(p, mod)} P${pod} Representative`);
 
 /** Every Pod Representative role a project should have, in module / pod order. */
 export function podRepRoleNames(p: ProjectDef): string[] {
