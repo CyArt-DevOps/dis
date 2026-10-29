@@ -250,6 +250,11 @@ async function ensureRoles(guild: Guild): Promise<RoleMap> {
           `pod:${p.key}:${m}:${pd}`,
           await getOrCreateRole(guild, roleNames.pod(p, m, pd), { permissions: [] })
         );
+        // Pod Representative (Phase 6): no server perms; its powers live in EMS.
+        set(
+          `podrep:${p.key}:${m}:${pd}`,
+          await getOrCreateRole(guild, roleNames.podRep(p, m, pd), { color: Colors.Aqua, permissions: [] })
+        );
       }
     }
   }
@@ -938,6 +943,9 @@ async function orderRoles(guild: Guild, roles: RoleMap): Promise<void> {
   for (const l of org.roles.leadership) push(`lead:${l}`);
   for (const p of activeProjects()) push(`plead:${p.key}`);
   for (const p of activeProjects()) push(`pcolead:${p.key}`);
+  for (const p of activeProjects())
+    for (let m = 1; m <= p.modules; m++)
+      for (let pd = 1; pd <= p.podsPerModule; pd++) push(`podrep:${p.key}:${m}:${pd}`);
   for (const p of activeProjects()) push(`project:${p.key}`);
   for (const p of activeProjects())
     for (let m = 1; m <= p.modules; m++) push(`module:${p.key}:${m}`);
@@ -1071,6 +1079,17 @@ async function pruneProject(guild: Guild, p: ProjectDef): Promise<void> {
     else if (mod) remove = Number(mod[1]) > p.modules;
     if (remove) {
       await role.delete("Module/pod pruned").catch(() => {});
+      logger.info({ project: p.key, role: role.name }, "Pruned role");
+    }
+  }
+
+  // Pod Representative roles of pods that no longer exist ("<Project> M<m> P<n> Representative").
+  const repPrefix = `${p.name} M`;
+  for (const role of guild.roles.cache.values()) {
+    if (!role.name.startsWith(repPrefix)) continue;
+    const rep = role.name.slice(repPrefix.length).match(/^(\d+) P(\d+) Representative$/);
+    if (rep && (Number(rep[1]) > p.modules || Number(rep[2]) > p.podsPerModule)) {
+      await role.delete("Pod pruned").catch(() => {});
       logger.info({ project: p.key, role: role.name }, "Pruned role");
     }
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { moduleLabel, moduleShort, roleNames, placeNames } from "../src/lib/names.js";
+import { moduleLabel, moduleShort, roleNames, placeNames, podRepRoleNames } from "../src/lib/names.js";
 import type { ProjectDef } from "../src/config/loader.js";
 
 const plain: ProjectDef = {
@@ -17,6 +17,22 @@ const named: ProjectDef = {
   modules: 5,
   moduleNames: { "5": "Team Velocity" },
 };
+
+describe("roleNames.podRep (Phase 6)", () => {
+  it("uses the short module form, like the pod VC (PR-BOT-09)", () => {
+    expect(roleNames.podRep(named, 1, 2)).toBe("CyBreach M1 P2 Representative");
+    expect(roleNames.podRep(named, 5, 3)).toBe("CyBreach Team Velocity P3 Representative");
+  });
+  it("lists one rep role per pod and none for a project without modules (PR-BOT-09/10)", () => {
+    const twoByTwo: ProjectDef = { ...plain, key: "dt", name: "DarkTrace", modules: 2, podsPerModule: 2 };
+    const noModules: ProjectDef = { ...plain, key: "ai", name: "AI SIEM", modules: 0, podsPerModule: 0 };
+    expect(podRepRoleNames(twoByTwo)).toEqual([
+      "DarkTrace M1 P1 Representative", "DarkTrace M1 P2 Representative",
+      "DarkTrace M2 P1 Representative", "DarkTrace M2 P2 Representative",
+    ]);
+    expect(podRepRoleNames(noModules)).toEqual([]);
+  });
+});
 
 describe("module naming", () => {
   it("defaults to Module N / MN without overrides", () => {

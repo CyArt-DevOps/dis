@@ -2,9 +2,17 @@ import type { ProjectDef } from "../config/loader.js";
 import { moduleLabel, roleNames } from "../lib/names.js";
 
 /** Wire shapes for the EMS integration. EMS's disMapping.js consumes these. */
+/** A pod a member represents (project = lower-case key). */
+export interface PodRef {
+  project: string;
+  module: number;
+  pod: number;
+}
+
 export interface Leadership {
   teamLeadOf: string[];
   coLeadOf: string[];
+  podRepOf: PodRef[];
 }
 
 export interface MemberDto {
@@ -27,14 +35,23 @@ export interface OrgDto {
 
 type ProjectLike = Pick<ProjectDef, "key" | "name" | "modules" | "podsPerModule" | "active" | "moduleNames">;
 
-/** Leads live only as Discord roles ("<Project> Team Lead"), so derive them from role names. */
+/**
+ * Leads live only as Discord roles ("<Project> Team Lead", "<Project> M<m> P<n> Representative"),
+ * so derive them from role names. Rep roles are matched without case and only for pods that exist.
+ */
 export function leadershipFromRoleNames(names: string[], projects: ProjectLike[]): Leadership {
   const has = new Set(names);
-  const out: Leadership = { teamLeadOf: [], coLeadOf: [] };
+  const lower = new Set(names.map((n) => n.toLowerCase()));
+  const out: Leadership = { teamLeadOf: [], coLeadOf: [], podRepOf: [] };
   for (const p of projects) {
     if (has.has(roleNames.projectTeamLead(p as ProjectDef))) out.teamLeadOf.push(p.key);
     if (has.has(roleNames.projectCoLead(p as ProjectDef))) out.coLeadOf.push(p.key);
+    for (let m = 1; m <= p.modules; m++)
+      for (let pd = 1; pd <= p.podsPerModule; pd++)
+        if (lower.has(roleNames.podRep(p as ProjectDef, m, pd).toLowerCase()))
+          out.podRepOf.push({ project: p.key.toLowerCase(), module: m, pod: pd });
   }
+  out.podRepOf.sort((a, b) => a.project.localeCompare(b.project) || a.module - b.module || a.pod - b.pod);
   return out;
 }
 

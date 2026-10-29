@@ -88,7 +88,13 @@ describe("v1Router", () => {
     expect(res.status).toBe(200);
     const [m] = (await res.json()) as { project: string; leadership: unknown }[];
     expect(m!.project).toBe("alpha");
-    expect(m!.leadership).toEqual({ teamLeadOf: ["alpha"], coLeadOf: [] });
+    expect(m!.leadership).toEqual({ teamLeadOf: ["alpha"], coLeadOf: [], podRepOf: [] });
+  });
+  it("PR-BOT-08: reports Pod Representative roles as podRepOf", async () => {
+    memberFindMany.mockResolvedValue([row]);
+    guild = { members: { cache: { get: () => ({ roles: { cache: { map: (f: (r: { name: string }) => string) => [{ name: "Alpha Project M1 P1 Representative" }].map(f) } } }) } } };
+    const [m] = (await (await fetch(`${base}/members`, { headers: auth })).json()) as { leadership: unknown }[];
+    expect(m!.leadership).toEqual({ teamLeadOf: [], coLeadOf: [], podRepOf: [{ project: "alpha", module: 1, pod: 1 }] });
   });
   it("nulls module and pod when the project no longer exists", async () => {
     memberFindMany.mockResolvedValue([{ ...row, project: "Gone" }]);

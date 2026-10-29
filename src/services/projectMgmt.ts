@@ -9,7 +9,7 @@ import {
 import { CONFIG_PATH, org, type OrgConfig, type ProjectDef } from "../config/loader.js";
 import { logger } from "../core/logger.js";
 import { prisma } from "../core/db.js";
-import { channelNames, moduleShort, roleNames } from "../lib/names.js";
+import { channelNames, moduleShort, podRepRoleNames, roleNames } from "../lib/names.js";
 import { bootstrapServer } from "./bootstrap.js";
 import { syncGuildCommands } from "./commandSync.js";
 import { normProject } from "./integrationPayloads.js";
@@ -53,6 +53,8 @@ function roleNamesOf(p: ProjectDef): string[] {
     for (let pd = 1; pd <= p.podsPerModule; pd++) names.push(roleNames.pod(p, m, pd));
   }
   for (const label of Object.values(p.moduleNames ?? {})) names.push(`${p.name} ${label}`);
+  // Pod Representative roles last, so renames still zip old ↔ new names position by position.
+  names.push(...podRepRoleNames(p));
   return dedupe(names);
 }
 
