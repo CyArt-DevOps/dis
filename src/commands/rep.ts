@@ -1,7 +1,7 @@
 import { PermissionFlagsBits, SlashCommandBuilder, MessageFlags } from "discord.js";
 import type { SlashCommand } from "../core/registry.js";
 import { canManageLeadership } from "../lib/rbac.js";
-import { activeProjects } from "../config/loader.js";
+import { activeProjects, org } from "../config/loader.js";
 import { assignPodRep, listPodReps, removePodRep } from "../services/leadership.js";
 
 // Pod Representatives (Phase 6): "<Project> M<m> P<n> Representative". EMS grants the pod powers.
@@ -67,18 +67,17 @@ export const rep: SlashCommand = {
 
     if (sub === "list") {
       const reps = listPodReps(interaction.guild, interaction.options.getString("project") ?? undefined);
-      const content = reps.length
-        ? reps.map((r) => `- <@${r.memberId}> — ${r.project} M${r.module} P${r.pod}`).join("\n")
-        : "No Pod Representatives.";
-      await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: formatRepList(reps), flags: MessageFlags.Ephemeral });
       return;
     }
 
-    const user = interaction.options.getUser("member", true);
-    const target = await interaction.guild.members.fetch(user.id);
+    // Role edits + audit log can take a while; acknowledge within Discord's 3 s window.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      const user = interaction.options.getUser("member", true);
+      const target = await interaction.guild.members.fetch(user.id);
 
-    if (sub === "assign") {
-      try {
+      if (sub === "assign") {
         const applied = await assignPodRep({
           member: target,
           projectKey: interaction.options.getString("project", true),
@@ -86,25 +85,46 @@ export const rep: SlashCommand = {
           podNum: interaction.options.getInteger("pod", true),
           actor,
         });
-        await interaction.reply({
-          content: `<@${target.id}> is now a Pod Representative. Roles: ${applied.join(", ")}`,
-          flags: MessageFlags.Ephemeral,
-        });
-      } catch (err) {
-        await interaction.reply({ content: (err as Error).message, flags: MessageFlags.Ephemeral });
+        await interaction.editReply(`<@${target.id}> is now a Pod Representative. Roles: ${applied.join(", ")}`);
+        return;
       }
-      return;
-    }
 
-    if (sub === "remove") {
-      await removePodRep({
-        member: target,
-        actor,
-        projectKey: interaction.options.getString("project") ?? undefined,
-        moduleNum: interaction.options.getInteger("module") ?? undefined,
-        podNum: interaction.options.getInteger("pod") ?? undefined,
-      });
-      await interaction.reply({ content: `Removed Pod Representative role from <@${target.id}>.`, flags: MessageFlags.Ephemeral });
+      if (sub === "remove") {
+        const { removed, failed } = await removePodRep({
+          member: target,
+          actor,
+          projectKey: interaction.options.getString("project") ?? undefined,
+          moduleNum: interaction.options.getInteger("module") ?? undefined,
+          podNum: interaction.options.getInteger("pod") ?? undefined,
+        });
+        const lines: string[] = [];
+        if (removed.length) lines.push(`Removed: ${removed.join(", ")}`);
+        if (failed.length) lines.push(`Could not remove: ${failed.join(", ")}`);
+        await interaction.editReply(
+          lines.length ? `<@${target.id}> — ${lines.join("\n")}` : `<@${target.id}> has no Pod Representative role to remove.`
+        );
+      }
+    } catch (err) {
+      await interaction.editReply((err as Error).message);
     }
   },
 };
+
+/** /rep list body: project names (not keys), kept under Discord's 2000-char message limit. */
+export function formatRepList(
+  reps: { memberId: string; project: string; module: number; pod: number }[]
+): string {
+  if (reps.length === 0) return "No Pod Representatives.";
+  const nameOf = (key: string) => org.projects.find((p) => p.key.toLowerCase() === key)?.name ?? key;
+  const lines = reps.map((r) => `- <@${r.memberId}> — ${nameOf(r.project)} M${r.module} P${r.pod}`);
+  const LIMIT = 1900; // headroom under 2000 for the "…and N more" line
+  const out: string[] = [];
+  let len = 0;
+  for (const line of lines) {
+    if (len + line.length + 1 > LIMIT) break;
+    out.push(line);
+    len += line.length + 1;
+  }
+  const rest = lines.length - out.length;
+  return rest > 0 ? `${out.join("\n")}\n…and ${rest} more` : out.join("\n");
+}
