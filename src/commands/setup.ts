@@ -1,7 +1,21 @@
 import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } from "discord.js";
 import type { SlashCommand } from "../core/registry.js";
-import { bootstrapServer } from "../services/bootstrap.js";
+import { bootstrapServer, type BootstrapReport } from "../services/bootstrap.js";
 import { isFounder } from "../lib/rbac.js";
+
+/** The /setup reply, including any Pod Representative roles that could not be made. */
+export function setupSummary(report: BootstrapReport): string {
+  let out = `Done. New roles: ${report.rolesCreated}. Active projects built: ${report.projectsBuilt}.`;
+  const rep = report.repRoles;
+  if (rep.renamed > 0) out += `\nRenamed ${rep.renamed} legacy Pod Representative role(s) to the numeric form.`;
+  if (rep.notCreated > 0) {
+    out +=
+      `\nWarning: ${rep.notCreated} of ${rep.wanted} Pod Representative role(s) were not created` +
+      (rep.error ? ` (${rep.error})` : "") +
+      (rep.shortfall > 0 ? `. Free up ${rep.shortfall} role(s) and run /setup again.` : ". Run /setup again later.");
+  }
+  return out;
+}
 
 export const setup: SlashCommand = {
   data: new SlashCommandBuilder()
@@ -30,9 +44,7 @@ export const setup: SlashCommand = {
 
     try {
       const report = await bootstrapServer(interaction.guild);
-      await interaction.editReply(
-        `Done. New roles: ${report.rolesCreated}. Active projects built: ${report.projectsBuilt}.`
-      );
+      await interaction.editReply(setupSummary(report));
     } catch (err) {
       await interaction.editReply(
         `Bootstrap failed: ${err instanceof Error ? err.message : "unknown error"}`

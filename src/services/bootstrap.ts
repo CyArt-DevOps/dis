@@ -17,7 +17,15 @@ import {
 import { activeProjects, org, type ProjectDef } from "../config/loader.js";
 import { logger } from "../core/logger.js";
 import { readState, updateState } from "../core/state.js";
-import { roleNames, channelNames, placeNames } from "../lib/names.js";
+import {
+  roleNames,
+  channelNames,
+  placeNames,
+  capRoleName,
+  legacyPodRep,
+  podRepRoleNames,
+} from "../lib/names.js";
+import { logEmbed, postLog } from "../lib/log.js";
 import { beginButton, IDS as ONBOARD_IDS } from "./onboarding.js";
 import { LEAVE_IDS, leavePanelButton, leavePanelEmbed } from "./leave.js";
 import {
@@ -81,13 +89,19 @@ async function getOrCreateRole(
     color?: number;
     mentionable?: boolean;
     permissions?: PermissionResolvable;
+    /** Match an existing role without case (Pod Representative roles). */
+    ignoreCase?: boolean;
   } = {}
 ): Promise<Role> {
+  name = capRoleName(name);
   const perms =
     opts.permissions !== undefined
       ? new PermissionsBitField(opts.permissions)
       : undefined;
-  const existing = guild.roles.cache.find((r) => r.name === name);
+  const lower = name.toLowerCase();
+  const existing = guild.roles.cache.find((r) =>
+    opts.ignoreCase ? r.name.toLowerCase() === lower : r.name === name
+  );
   if (existing) {
     // Keep permissions in sync on re-run (idempotent)
     if (perms && existing.permissions.bitfield !== perms.bitfield) {
@@ -169,7 +183,8 @@ async function getOrCreateVoiceChannel(
   });
 }
 
-async function ensureRoles(guild: Guild): Promise<RoleMap> {
+/** Exported for tests. */
+export async function ensureRoles(guild: Guild): Promise<{ roles: RoleMap; repRoles: RepRoleReport }> {
   const map: RoleMap = new Map();
   const set = (key: string, role: Role) => map.set(key, role);
 
@@ -250,15 +265,99 @@ async function ensureRoles(guild: Guild): Promise<RoleMap> {
           `pod:${p.key}:${m}:${pd}`,
           await getOrCreateRole(guild, roleNames.pod(p, m, pd), { permissions: [] })
         );
-        // Pod Representative (Phase 6): no server perms; its powers live in EMS.
-        set(
-          `podrep:${p.key}:${m}:${pd}`,
-          await getOrCreateRole(guild, roleNames.podRep(p, m, pd), { color: Colors.Aqua, permissions: [] })
-        );
       }
     }
   }
-  return map;
+  // Rep roles last: they are optional, so they must never use up the room the
+  // membership roles above need (Discord caps a guild at 250 roles).
+  const repRoles = await ensurePodRepRoles(guild, map);
+  return { roles: map, repRoles };
+}
+
+/** Discord's per-guild role limit (including @everyone). */
+export const GUILD_ROLE_LIMIT = 250;
+
+export interface RepRoleReport {
+  /** Rep roles the config asks for. */
+  wanted: number;
+  created: number;
+  /** Legacy custom-label rep roles renamed to the numeric form. */
+  renamed: number;
+  /** Wanted rep roles that still do not exist after this run. */
+  notCreated: number;
+  /** How many roles over the 250 limit creating them all would have gone. */
+  shortfall: number;
+  error?: string;
+}
+
+/**
+ * Pod Representative roles (Phase 6): no server perms; their powers live in EMS.
+ * Never throws: a full guild or a Discord error stops rep-role creation only, and
+ * the rest of bootstrap carries on. Legacy "<Project> <custom module> P<n>
+ * Representative" roles are renamed in place so their holders keep them.
+ */
+async function ensurePodRepRoles(guild: Guild, map: RoleMap): Promise<RepRoleReport> {
+  const report: RepRoleReport = { wanted: 0, created: 0, renamed: 0, notCreated: 0, shortfall: 0 };
+  const findCi = (name: string) => {
+    const lower = name.toLowerCase();
+    return guild.roles.cache.find((r) => r.name.toLowerCase() === lower);
+  };
+  const missing: { key: string; name: string }[] = [];
+  for (const p of activeProjects()) {
+    for (let m = 1; m <= p.modules; m++) {
+      for (let pd = 1; pd <= p.podsPerModule; pd++) {
+        report.wanted++;
+        const key = `podrep:${p.key}:${m}:${pd}`;
+        const name = roleNames.podRep(p, m, pd);
+        const existing = findCi(name);
+        if (existing) {
+          map.set(key, await getOrCreateRole(guild, name, { color: Colors.Aqua, permissions: [], ignoreCase: true }));
+          continue;
+        }
+        const legacy = findCi(legacyPodRep(p, m, pd));
+        if (legacy) {
+          try {
+            await legacy.setName(name, "Pod Representative roles are numeric (Phase 6b)");
+            map.set(key, legacy);
+            report.renamed++;
+            logger.info({ from: legacy.name, to: name }, "Renamed legacy Pod Representative role");
+            continue;
+          } catch (err) {
+            logger.warn({ role: legacy.name, err: (err as Error).message }, "Could not rename legacy Pod Representative role");
+          }
+        }
+        missing.push({ key, name });
+      }
+    }
+  }
+  if (missing.length === 0) return report;
+
+  const total = guild.roles.cache.size + missing.length;
+  if (total > GUILD_ROLE_LIMIT) {
+    report.shortfall = total - GUILD_ROLE_LIMIT;
+    report.notCreated = missing.length;
+    report.error = `creating ${missing.length} Pod Representative role(s) would exceed Discord's ${GUILD_ROLE_LIMIT}-role limit by ${report.shortfall}`;
+    logger.warn({ missing: missing.length, roles: guild.roles.cache.size }, `Skipping Pod Representative roles: ${report.error}`);
+    return report;
+  }
+
+  for (let i = 0; i < missing.length; i++) {
+    const { key, name } = missing[i]!;
+    try {
+      map.set(key, await getOrCreateRole(guild, name, { color: Colors.Aqua, permissions: [], ignoreCase: true }));
+      report.created++;
+    } catch (err) {
+      const code = (err as { code?: unknown }).code;
+      report.notCreated = missing.length - i;
+      report.error =
+        code === 30005
+          ? `Discord's ${GUILD_ROLE_LIMIT}-role limit reached (30005)`
+          : `role create failed: ${(err as Error).message}`;
+      logger.warn({ role: name, code, err: (err as Error).message }, "Stopped creating Pod Representative roles");
+      break;
+    }
+  }
+  return report;
 }
 
 function adminRoleIds(roles: RoleMap): string[] {
@@ -1028,7 +1127,8 @@ async function dedupProject(guild: Guild, p: ProjectDef): Promise<void> {
   }
 }
 
-async function pruneProject(guild: Guild, p: ProjectDef): Promise<void> {
+/** Exported for tests. */
+export async function pruneProject(guild: Guild, p: ProjectDef): Promise<void> {
   // Module categories named "<Project> M<n>" with n > modules.
   const catPrefix = `${p.name} M`;
   for (const c of guild.channels.cache.values()) {
@@ -1083,27 +1183,66 @@ async function pruneProject(guild: Guild, p: ProjectDef): Promise<void> {
     }
   }
 
-  // Pod Representative roles of pods that no longer exist ("<Project> M<m> P<n> Representative").
-  const repPrefix = `${p.name} M`;
-  for (const role of guild.roles.cache.values()) {
-    if (!role.name.startsWith(repPrefix)) continue;
-    const rep = role.name.slice(repPrefix.length).match(/^(\d+) P(\d+) Representative$/);
-    if (rep && (Number(rep[1]) > p.modules || Number(rep[2]) > p.podsPerModule)) {
-      await role.delete("Pod pruned").catch(() => {});
-      logger.info({ project: p.key, role: role.name }, "Pruned role");
+  // Pod Representative roles of pods that no longer exist ("<Project> M<m> P<n> Representative",
+  // any case), plus leftover legacy custom-label ones ("<Project> <label> P<n> Representative")
+  // whose pod is gone or whose numeric replacement already exists. Never anything else that
+  // merely ends in " Representative".
+  const wanted = new Set(podRepRoleNames(p).map((n) => n.toLowerCase()));
+  const present = new Set([...guild.roles.cache.values()].map((r) => r.name.toLowerCase()));
+  const repPrefix = `${p.name} M`.toLowerCase();
+  const legacyPrefixes = Object.entries(p.moduleNames ?? {}).map(([num, label]) => ({
+    mod: Number(num),
+    prefix: `${p.name} ${label} P`.toLowerCase(),
+  }));
+  for (const role of [...guild.roles.cache.values()]) {
+    const lower = role.name.toLowerCase();
+    if (wanted.has(lower)) continue;
+    let remove = false;
+    if (lower.startsWith(repPrefix)) {
+      const rep = lower.slice(repPrefix.length).match(/^(\d+) p(\d+) representative$/);
+      if (rep) remove = Number(rep[1]) > p.modules || Number(rep[2]) > p.podsPerModule;
     }
+    for (const { mod, prefix } of legacyPrefixes) {
+      if (remove || !lower.startsWith(prefix)) continue;
+      const pod = lower.slice(prefix.length).match(/^(\d+) representative$/);
+      if (!pod) continue;
+      const gone = !Number.isInteger(mod) || mod > p.modules || Number(pod[1]) > p.podsPerModule;
+      remove = gone || present.has(roleNames.podRep(p, mod, Number(pod[1])).toLowerCase());
+    }
+    if (!remove) continue;
+    await auditRepHolders(guild, role);
+    await role.delete("Pod pruned").catch(() => {});
+    logger.info({ project: p.key, role: role.name }, "Pruned role");
   }
+}
+
+/** Before a held rep role is deleted, record who held it (they lose it silently otherwise). */
+async function auditRepHolders(guild: Guild, role: Role): Promise<void> {
+  const ids = [...role.members.values()].map((m) => m.id);
+  if (ids.length === 0) return;
+  const SHOW = 40;
+  const list = ids.slice(0, SHOW).map((id) => `<@${id}>`).join(", ");
+  const more = ids.length > SHOW ? ` …and ${ids.length - SHOW} more` : "";
+  await postLog(
+    guild,
+    "audit",
+    logEmbed("Pod Representative role pruned", 0xed4245).setDescription(
+      `\`${role.name}\` is being deleted (pod no longer exists). Holders: ${list}${more}`
+    )
+  );
 }
 
 export interface BootstrapReport {
   rolesCreated: number;
   projectsBuilt: number;
+  /** Pod Representative roles: created / renamed / skipped (role limit or Discord error). */
+  repRoles: RepRoleReport;
 }
 
 export async function bootstrapServer(guild: Guild): Promise<BootstrapReport> {
   logger.info({ guild: guild.name }, "Bootstrap start");
   const before = guild.roles.cache.size;
-  const roles = await ensureRoles(guild);
+  const { roles, repRoles } = await ensureRoles(guild);
 
   await buildInformation(guild, roles);
   await buildHr(guild, roles);
@@ -1134,5 +1273,5 @@ export async function bootstrapServer(guild: Guild): Promise<BootstrapReport> {
 
   const after = guild.roles.cache.size;
   logger.info({ guild: guild.name }, "Bootstrap done");
-  return { rolesCreated: Math.max(0, after - before), projectsBuilt: projects.length };
+  return { rolesCreated: Math.max(0, after - before), projectsBuilt: projects.length, repRoles };
 }
