@@ -17,6 +17,7 @@ import { shortStreak } from "../lib/streak.js";
 import type { InteractionHandler } from "../core/registry.js";
 import { notifyMember } from "./notify.js";
 import { autoWarnOff, getAutoWarn } from "./autoWarn.js";
+import { ackFollowUp } from "../lib/warnAck.js";
 
 /**
  * Formal warnings and the three-strike rule.
@@ -453,9 +454,7 @@ export const warningAckHandler: InteractionHandler = {
         .setDisabled(true)
     );
     await i.update({ components: [done] });
-    await i.followUp({
-      content: `Thank you. Warning #${id} is acknowledged${late ? " (after the deadline)" : ""}. Please make sure to follow the attendance rules from now on.`,
-    });
+    await i.followUp({ content: ackFollowUp(w, Boolean(late)) });
   },
 };
 
