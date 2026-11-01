@@ -15,7 +15,7 @@ vi.mock("../src/config/loader.js", () => ({
   org: { projects },
 }));
 
-const { assignPodRep, removePodRep, listPodReps } = await import("../src/services/leadership.js");
+const { assignPodRep, removePodRep, listPodReps, podRepHolders, PodHasRepError } = await import("../src/services/leadership.js");
 const { postLog } = await import("../src/lib/log.js");
 
 type Role = { id: string; name: string };
@@ -33,18 +33,23 @@ function rolesCache(list: Role[]) {
   });
 }
 
-function fakeMember(id: string, held: string[] = [], guildRoles: Role[] = roleList) {
+type FakeGuild = { roles: { cache: ReturnType<typeof rolesCache> }; members: { cache: Map<string, unknown> } };
+const fakeGuild = (guildRoles: Role[] = roleList): FakeGuild => ({ roles: { cache: rolesCache(guildRoles) }, members: { cache: new Map() } });
+
+/** A member of `guild` (a fresh guild by default); it is added to the guild's member cache. */
+function fakeMember(id: string, held: string[] = [], guildRoles: Role[] = roleList, guild: FakeGuild = fakeGuild(guildRoles)) {
   const mine = guildRoles.filter((r) => held.includes(r.name));
   const member = {
     id,
     user: { tag: id },
-    guild: { roles: { cache: rolesCache(guildRoles) } },
+    guild,
     roles: {
       cache: rolesCache(mine),
       add: vi.fn(async (r: Role) => { member.roles.cache.set(r.id, r); }),
       remove: vi.fn(async (r: Role) => { member.roles.cache.delete(r.id); }),
     },
   };
+  guild.members.cache.set(id, member);
   return member;
 }
 const actor = fakeMember("hr") as never;
@@ -81,6 +86,40 @@ describe("assignPodRep", () => {
     const m = fakeMember("u1");
     await expect(assignPodRep({ member: m as never, projectKey: "cybreach", moduleNum: 1, podNum: 9, actor })).rejects.toThrow(/no pod/i);
     await expect(assignPodRep({ member: m as never, projectKey: "ai", moduleNum: 1, podNum: 1, actor })).rejects.toThrow(/no pod/i);
+  });
+});
+
+describe("assignPodRep — one rep per pod (sub-project C)", () => {
+  const names = (m: ReturnType<typeof fakeMember>) => [...m.roles.cache.values()].map((r) => r.name);
+  it("RC-DIS-02: an occupied pod throws PodHasRepError with the holder and changes nothing", async () => {
+    const guild = fakeGuild();
+    const old = fakeMember("old", ["CyBreach M1 P2 Representative"], roleList, guild);
+    const m = fakeMember("u1", [], roleList, guild);
+    const err = await assignPodRep({ member: m as never, projectKey: "cybreach", moduleNum: 1, podNum: 2, actor }).catch((e) => e);
+    expect(err).toBeInstanceOf(PodHasRepError);
+    expect(err.message).toBe("CyBreach M1 P2 already has a representative.");
+    expect(err.holders.map((h: { id: string }) => h.id)).toEqual(["old"]);
+    expect(m.roles.add).not.toHaveBeenCalled();
+    expect(names(old)).toContain("CyBreach M1 P2 Representative");
+  });
+  it("RC-DIS-02: replace → the old holder loses the rep role (keeps membership), the new one gets it", async () => {
+    const guild = fakeGuild();
+    const old = fakeMember("old", ["CyBreach", "CyBreach M1 P2 Representative"], roleList, guild);
+    const m = fakeMember("u1", [], roleList, guild);
+    await assignPodRep({ member: m as never, projectKey: "cybreach", moduleNum: 1, podNum: 2, actor: { emsName: "Lena" }, replace: true });
+    expect(names(old)).toEqual(["CyBreach"]);
+    expect(names(m)).toContain("CyBreach M1 P2 Representative");
+    expect(old.roles.remove).toHaveBeenCalledWith(expect.objectContaining({ name: "CyBreach M1 P2 Representative" }), "Lena (EMS) replaced Pod Representative");
+  });
+  it("the member already holding the role is not a conflict; podRepHolders lists other holders only", async () => {
+    const guild = fakeGuild();
+    const m = fakeMember("u1", ["CyBreach M1 P2 Representative"], roleList, guild);
+    fakeMember("u2", ["CyBreach M2 P1 Representative"], roleList, guild);
+    await expect(assignPodRep({ member: m as never, projectKey: "cybreach", moduleNum: 1, podNum: 2, actor })).resolves.toContain("CyBreach M1 P2 Representative");
+    expect(podRepHolders(guild as never, "cybreach", 1, 2)).toHaveLength(1);
+    expect(podRepHolders(guild as never, "cybreach", 1, 2, "u1")).toEqual([]);
+    expect(podRepHolders(guild as never, "cybreach", 2, 2)).toEqual([]); // role missing
+    expect(podRepHolders(guild as never, "nope", 1, 1)).toEqual([]);
   });
 });
 

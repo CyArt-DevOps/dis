@@ -95,12 +95,27 @@ export function listLeads(guild: Guild, kind: LeadKind): GuildMember[] {
 // "<Project> M<m> P<n> Representative": no server perms, no org-wide base role.
 // EMS reads the role through /api/v1/members and grants the pod powers there.
 
+/** Who made a rep change: a Discord member (/rep) or an EMS user (POST / DELETE /api/v1/reps). */
+export type RepActor = GuildMember | { emsName: string };
+const actorTag = (a: RepActor): string => ("emsName" in a ? `${a.emsName} (EMS)` : a.user.tag);
+const actorMention = (a: RepActor): string => ("emsName" in a ? `${a.emsName} (EMS)` : `<@${a.id}>`);
+
 export interface PodRepArgs {
   member: GuildMember;
   projectKey: string;
   moduleNum: number;
   podNum: number;
-  actor: GuildMember;
+  actor: RepActor;
+  /** Sub-project C: one rep per pod. An occupied pod throws PodHasRepError unless `replace` (old holders lose the role). */
+  replace?: boolean;
+}
+
+/** The pod already has a representative and the caller did not ask to replace them. */
+export class PodHasRepError extends Error {
+  constructor(public readonly holders: GuildMember[], podLabel: string) {
+    super(`${podLabel} already has a representative.`);
+    this.name = "PodHasRepError";
+  }
 }
 
 /** Rep roles are matched without case (a hand-renamed "cybreach m1 p2 representative" still counts). */
@@ -109,9 +124,19 @@ function findRoleCi(guild: Guild, name: string): Role | undefined {
   return guild.roles.cache.find((r) => r.name.toLowerCase() === lower);
 }
 
+/** Members other than `exceptId` holding this pod's rep role (from the member cache). [] when the role is missing. */
+export function podRepHolders(guild: Guild, projectKey: string, moduleNum: number, podNum: number, exceptId?: string): GuildMember[] {
+  const p = findProject(projectKey);
+  if (!p) return [];
+  const role = findRoleCi(guild, roleNames.podRep(p, moduleNum, podNum));
+  if (!role) return [];
+  return [...guild.members.cache.values()].filter((m) => m.id !== exceptId && m.roles.cache.has(role.id));
+}
+
 /**
  * Adds the rep role plus the project / module / pod membership roles, so the rep is in the pod.
- * Throws before changing anything if the rep role itself does not exist yet.
+ * Throws before changing anything if the rep role itself does not exist yet, or (one rep per pod) if someone else
+ * holds it and `replace` is not set; with `replace` the old holders lose the rep role first.
  */
 export async function assignPodRep(args: PodRepArgs): Promise<string[]> {
   const p = findProject(args.projectKey);
@@ -120,6 +145,9 @@ export async function assignPodRep(args: PodRepArgs): Promise<string[]> {
   const guild = args.member.guild;
   const repRole = findRoleCi(guild, roleNames.podRep(p, args.moduleNum, args.podNum));
   if (!repRole) throw new Error("Rep role missing — run /setup");
+  const holders = podRepHolders(guild, p.key, args.moduleNum, args.podNum, args.member.id);
+  if (holders.length && !args.replace) throw new PodHasRepError(holders, `${p.name} M${args.moduleNum} P${args.podNum}`);
+  for (const h of holders) await h.roles.remove(repRole, `${actorTag(args.actor)} replaced Pod Representative`);
   const roles: Role[] = [repRole];
   for (const name of [
     roleNames.project(p),
@@ -132,26 +160,26 @@ export async function assignPodRep(args: PodRepArgs): Promise<string[]> {
   const applied: string[] = [];
   for (const r of roles) {
     if (!args.member.roles.cache.has(r.id)) {
-      await args.member.roles.add(r, `${args.actor.user.tag} assigned Pod Representative`);
+      await args.member.roles.add(r, `${actorTag(args.actor)} assigned Pod Representative`);
     }
     applied.push(r.name);
   }
-  await postLog(
-    guild,
-    "audit",
-    logEmbed("Pod Representative assigned", 0x1abc9c)
-      .setDescription(`<@${args.member.id}> → ${p.name} M${args.moduleNum} P${args.podNum}`)
-      .addFields({ name: "By", value: `<@${args.actor.id}>` })
-  );
+  const embed = logEmbed("Pod Representative assigned", 0x1abc9c)
+    .setDescription(`<@${args.member.id}> → ${p.name} M${args.moduleNum} P${args.podNum}`)
+    .addFields({ name: "By", value: actorMention(args.actor) });
+  if (holders.length) embed.addFields({ name: "Replaced", value: holders.map((h) => `<@${h.id}>`).join(", ") });
+  await postLog(guild, "audit", embed);
   return applied;
 }
 
 export interface PodRepRemoveArgs {
   member: GuildMember;
-  actor: GuildMember;
+  actor: RepActor;
   projectKey?: string;
   moduleNum?: number;
   podNum?: number;
+  /** Sub-project C: why the rep was removed (shown in the audit log). */
+  reason?: string;
 }
 
 /**
@@ -191,20 +219,18 @@ export async function removePodRep(args: PodRepRemoveArgs): Promise<{ removed: s
   const held = [...args.member.roles.cache.values()].filter((r) => targets.has(r.name.toLowerCase()));
   for (const r of held) {
     try {
-      await args.member.roles.remove(r, `${args.actor.user.tag} removed Pod Representative`);
+      await args.member.roles.remove(r, `${actorTag(args.actor)} removed Pod Representative`);
       removed.push(r.name);
     } catch {
       failed.push(r.name);
     }
   }
   if (removed.length > 0) {
-    await postLog(
-      args.member.guild,
-      "audit",
-      logEmbed("Pod Representative removed", 0xed4245)
-        .setDescription(`<@${args.member.id}> (${removed.join(", ")})`)
-        .addFields({ name: "By", value: `<@${args.actor.id}>` })
-    );
+    const embed = logEmbed("Pod Representative removed", 0xed4245)
+      .setDescription(`<@${args.member.id}> (${removed.join(", ")})`)
+      .addFields({ name: "By", value: actorMention(args.actor) });
+    if (args.reason) embed.addFields({ name: "Reason", value: args.reason.slice(0, 1000) });
+    await postLog(args.member.guild, "audit", embed);
   }
   return { removed, failed };
 }
