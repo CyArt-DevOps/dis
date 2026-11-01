@@ -95,6 +95,17 @@ export function leadershipFromRoleNames(names: string[], projects: ProjectLike[]
 }
 
 /**
+ * Leadership right after a role change. discord.js does not update `member.roles.cache` synchronously after
+ * roles.add / roles.remove, so start from the cached names, add the names just added and drop the ones just
+ * removed (without case).
+ */
+export function leadershipAfterChange(cached: string[], added: string[], removed: string[], projects: ProjectLike[]): Leadership {
+  const gone = new Set(removed.map((n) => n.toLowerCase()));
+  const names = [...cached, ...added].filter((n) => !gone.has(n.toLowerCase()));
+  return leadershipFromRoleNames(names, projects);
+}
+
+/**
  * Member.project stores the project's display name (onboarding writes p.name),
  * but EMS keys projects by `key`. Accept either, return the key (null if the
  * project no longer exists in org.json). Case and surrounding whitespace are ignored.

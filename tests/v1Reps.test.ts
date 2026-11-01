@@ -30,8 +30,9 @@ function addMember(id: string, held: string[] = [], failRemove = false) {
     id, displayName: `Name ${id.slice(-2)}`, user: { tag: id }, guild,
     roles: {
       cache: rolesCache(roleList.filter((r) => held.includes(r.name))),
-      add: vi.fn(async (r: Role) => { member.roles.cache.set(r.id, r); }),
-      remove: vi.fn(async (r: Role) => { if (failRemove) throw new Error("Missing Permissions"); member.roles.cache.delete(r.id); }),
+      // Like discord.js 14, add / remove do NOT update roles.cache right away (names() replays the calls instead).
+      add: vi.fn(async (_r: Role) => {}),
+      remove: vi.fn(async (_r: Role) => { if (failRemove) throw new Error("Missing Permissions"); }),
     },
   };
   guild!.members.cache.set(id, member);
@@ -63,7 +64,13 @@ beforeEach(() => {
 });
 const send = (method: string, body: unknown, headers: Record<string, string> = { Authorization: `Bearer ${KEY}` }) =>
   fetch(base, { method, headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-const names = (m: ReturnType<typeof addMember>) => [...m.roles.cache.values()].map((r) => r.name).sort();
+/** Role names after the recorded add / remove calls (the fake cache itself never changes). */
+const names = (m: ReturnType<typeof addMember>) => {
+  const held = new Map([...m.roles.cache.values()].map((r) => [r.id, r]));
+  for (const [r] of m.roles.add.mock.calls as [Role][]) held.set(r.id, r);
+  for (const [r] of m.roles.remove.mock.calls as [Role][]) held.delete(r.id);
+  return [...held.values()].map((r) => r.name).sort();
+};
 const assign = { discordUserId: A, projectKey: "cybreach", moduleNum: 1, podNum: 1, actor: { emsUserId: 8, name: "Lena" } };
 
 describe("POST /api/v1/reps", () => {

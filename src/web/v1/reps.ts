@@ -6,7 +6,8 @@ import { findProject, org } from "../../config/loader.js";
 import { botGuild } from "../../core/botClient.js";
 import { logger } from "../../core/logger.js";
 import { assignPodRep, podRepHolders, removePodRep, PodHasRepError } from "../../services/leadership.js";
-import { leadershipFromRoleNames } from "../../services/integrationPayloads.js";
+import { leadershipAfterChange } from "../../services/integrationPayloads.js";
+import { roleNames } from "../../lib/names.js";
 
 /**
  * Pod Rep changes asked for by EMS (sub-project C §5), mounted at /api/v1/reps behind the v1 Bearer guard. EMS has
@@ -38,7 +39,9 @@ const fail = (res: Res, status: number, error: string, message: string, extra: R
 const invalid = (res: Res, err: z.ZodError) =>
   fail(res, 400, "invalid", "Request body is invalid.", { issues: err.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`) });
 
-const leadershipOf = (m: GuildMember) => leadershipFromRoleNames([...m.roles.cache.values()].map((r) => r.name), org.projects);
+/** Leadership after a change: the role cache lags roles.add / remove, so apply the change to the cached names. */
+const leadershipOf = (m: GuildMember, added: string[] = [], removed: string[] = []) =>
+  leadershipAfterChange([...m.roles.cache.values()].map((r) => r.name), added, removed, org.projects);
 const nameOf = (m: GuildMember) => m.displayName ?? m.id;
 const emsActor = (a?: { name: string }) => ({ emsName: a?.name ?? "EMS" });
 
@@ -79,10 +82,11 @@ repsRouter.post("/", async (req, res) => {
     });
   }
   try {
+    const repName = roleNames.podRep(r.p, b.moduleNum, b.podNum);
     const applied = await assignPodRep({ member: r.member, projectKey: r.p.key, moduleNum: b.moduleNum, podNum: b.podNum, actor: emsActor(b.actor), replace: b.replace });
     return res.json({
-      ok: true, applied, replaced: holders.map((h) => h.id), leadership: leadershipOf(r.member),
-      replacedLeadership: holders.map((h) => ({ discordUserId: h.id, leadership: leadershipOf(h) })),
+      ok: true, applied, replaced: holders.map((h) => h.id), leadership: leadershipOf(r.member, applied),
+      replacedLeadership: holders.map((h) => ({ discordUserId: h.id, leadership: leadershipOf(h, [], [repName]) })),
     });
   } catch (err) {
     if (err instanceof PodHasRepError) {
@@ -105,5 +109,5 @@ repsRouter.delete("/", async (req, res) => {
     member: r.member, actor: emsActor(b.actor), projectKey: r.p.key, moduleNum: b.moduleNum, podNum: b.podNum, reason: b.reason,
   });
   if (failed.length) return fail(res, 502, "role_change_failed", `Discord refused to remove: ${failed.join(", ")}`);
-  return res.json({ ok: true, removed, leadership: leadershipOf(r.member) });
+  return res.json({ ok: true, removed, leadership: leadershipOf(r.member, [], removed) });
 });

@@ -12,7 +12,7 @@ import { canManageLeadership, isProjectTeamLead } from "../lib/rbac.js";
 import { activeProjects, findProject, org } from "../config/loader.js";
 import { roleNames } from "../lib/names.js";
 import { assignPodRep, listPodReps, podRepHolders, removePodRep } from "../services/leadership.js";
-import { leadershipFromRoleNames, repChangedPayload } from "../services/integrationPayloads.js";
+import { leadershipAfterChange, leadershipFromRoleNames, repChangedPayload } from "../services/integrationPayloads.js";
 import { enqueueEvent } from "../services/emsOutbox.js";
 
 // Pod Representatives (Phase 6): "<Project> M<m> P<n> Representative". EMS grants the pod powers.
@@ -27,7 +27,9 @@ const projectChoices = () =>
 export const REP_IDS = { replace: "rep:replace", cancel: "rep:cancel" } as const;
 const REPLACE_WAIT_MS = 60_000;
 
-const leadershipOf = (m: GuildMember) => leadershipFromRoleNames([...m.roles.cache.values()].map((r) => r.name), org.projects);
+/** Leadership after a change: the role cache lags roles.add / remove, so apply the change to the cached names. */
+const leadershipOf = (m: GuildMember, added: string[] = [], removed: string[] = []) =>
+  leadershipAfterChange([...m.roles.cache.values()].map((r) => r.name), added, removed, org.projects);
 
 function replaceButtons() {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -145,10 +147,11 @@ export const rep: SlashCommand = {
         }
         const applied = await assignPodRep({ member: target, projectKey: key, moduleNum, podNum, actor, replace });
         await interaction.editReply({ content: `<@${target.id}> is now a Pod Representative. Roles: ${applied.join(", ")}`, components: [] });
-        const base = { discordUserId: target.id, project: key, module: moduleNum, pod: podNum, actorDiscordId: actor.id, leadership: leadershipOf(target) };
+        const repName = project ? roleNames.podRep(project, moduleNum, podNum) : "";
+        const base = { discordUserId: target.id, project: key, module: moduleNum, pod: podNum, actorDiscordId: actor.id, leadership: leadershipOf(target, applied) };
         if (!holders.length) await enqueueEvent("rep.changed", repChangedPayload({ ...base, action: "assigned" }));
         for (const h of holders) {
-          await enqueueEvent("rep.changed", repChangedPayload({ ...base, action: "replaced", replacedDiscordUserId: h.id, replacedLeadership: leadershipOf(h) }));
+          await enqueueEvent("rep.changed", repChangedPayload({ ...base, action: "replaced", replacedDiscordUserId: h.id, replacedLeadership: leadershipOf(h, [], [repName]) }));
         }
         return;
       }
@@ -173,7 +176,7 @@ export const rep: SlashCommand = {
         await interaction.editReply(
           lines.length ? `<@${target.id}> — ${lines.join("\n")}` : `<@${target.id}> has no Pod Representative role to remove.`
         );
-        const leadership = leadershipOf(target);
+        const leadership = leadershipOf(target, [], removed);
         for (const ref of leadershipFromRoleNames(removed, org.projects).podRepOf) {
           await enqueueEvent("rep.changed", repChangedPayload({
             action: "removed", discordUserId: target.id, project: ref.project, module: ref.module, pod: ref.pod, actorDiscordId: actor.id, reason, leadership,

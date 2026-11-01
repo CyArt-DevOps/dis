@@ -22,6 +22,9 @@ const { rep, formatRepList, REP_IDS } = await import("../src/commands/rep.js");
 
 const roles = (...names: string[]) => ({ cache: new Map(names.map((name, i) => [`r${i}`, { id: `r${i}`, name }])) });
 const TARGET = "210000000000000021";
+// The target's cached roles. The fakes never change them (discord.js 14 updates the cache late), so leadership must
+// come from the cache plus what the service says it added / removed.
+let targetRoles: string[] = [];
 const ACTOR = "800000000000000008";
 function fakeInteraction(sub: string, opts: Record<string, unknown> = {}, click?: { customId: string } | "timeout") {
   const update = vi.fn(async () => {});
@@ -36,7 +39,7 @@ function fakeInteraction(sub: string, opts: Record<string, unknown> = {}, click?
     inCachedGuild: () => true,
     guild: {
       members: {
-        fetch: vi.fn(async (id: string) => ({ id, roles: id === TARGET ? roles("CyBreach", "CyBreach Module 1 Pod 2", "CyBreach M1 P2 Representative") : roles("CyBreach Team Lead") })),
+        fetch: vi.fn(async (id: string) => ({ id, roles: id === TARGET ? roles(...targetRoles) : roles("CyBreach Team Lead") })),
       },
     },
     deferred: false,
@@ -59,7 +62,7 @@ const text = (fn: ReturnType<typeof vi.fn>) => {
   return typeof arg === "string" ? arg : arg.content;
 };
 
-beforeEach(() => { vi.clearAllMocks(); canManage.mockReturnValue(true); teamLeadOf.mockReturnValue(false); svc.podRepHolders.mockReturnValue([]); });
+beforeEach(() => { targetRoles = ["CyBreach", "CyBreach Module 1 Pod 2", "CyBreach M1 P2 Representative"]; vi.clearAllMocks(); canManage.mockReturnValue(true); teamLeadOf.mockReturnValue(false); svc.podRepHolders.mockReturnValue([]); });
 
 describe("/rep permission gate", () => {
   it.each(["assign", "remove", "list"])("%s refuses a member who is neither staff nor that project's Team Lead", async (sub) => {
@@ -102,6 +105,7 @@ describe("/rep permission gate", () => {
 
 describe("/rep assign | remove", () => {
   it("assign defers, then edits the reply and reports 'assigned' to EMS", async () => {
+    targetRoles = ["CyBreach", "CyBreach Module 1 Pod 2"]; // not yet a rep: the new role is only in assignPodRep's answer
     const i = fakeInteraction("assign", { project: "cybreach", module: 1, pod: 2 });
     await rep.execute(i as never);
     expect(i.deferReply).toHaveBeenCalled();
@@ -113,7 +117,7 @@ describe("/rep assign | remove", () => {
     }));
   });
   it("RC-DIS-04: an occupied pod asks 'Replace @old?' with Replace / Cancel; Replace swaps and reports 'replaced'", async () => {
-    svc.podRepHolders.mockReturnValue([{ id: "260000000000000026", roles: roles() }]);
+    svc.podRepHolders.mockReturnValue([{ id: "260000000000000026", roles: roles("CyBreach M1 P2 Representative") }]);
     const i = fakeInteraction("assign", { project: "cybreach", module: 1, pod: 2 }, { customId: REP_IDS.replace });
     await rep.execute(i as never);
     const prompt = i.editReply.mock.calls[0]![0] as { content: string; components: { toJSON: () => { components: { custom_id: string; label: string }[] } }[] };
@@ -151,7 +155,9 @@ describe("/rep assign | remove", () => {
     expect(msg).toMatch(/Removed: CyBreach M1 P2 Representative/);
     expect(msg).toMatch(/Could not remove: CyBreach M2 P1 Representative/);
     expect(enqueueEvent).toHaveBeenCalledTimes(1);
-    expect(enqueueEvent).toHaveBeenCalledWith("rep.changed", expect.objectContaining({ action: "removed", module: 1, pod: 2, reason: "Moved pods" }));
+    expect(enqueueEvent).toHaveBeenCalledWith("rep.changed", expect.objectContaining({
+      action: "removed", module: 1, pod: 2, reason: "Moved pods", leadership: { teamLeadOf: [], coLeadOf: [], podRepOf: [] },
+    }));
   });
   it("remove without a usable reason is refused; nothing to remove says so; bad args show the error", async () => {
     const r = fakeInteraction("remove", { project: "cybreach", reason: " a " });
