@@ -1,5 +1,6 @@
 import { GuildMember, PermissionsBitField } from "discord.js";
-import { org } from "../config/loader.js";
+import { findProject, org } from "../config/loader.js";
+import { roleNames } from "./names.js";
 
 export type AdminRole = "Founder" | "Manager" | "HR";
 
@@ -23,4 +24,12 @@ export function isStaff(member: GuildMember): boolean {
 
 export function canManageLeadership(member: GuildMember): boolean {
   return isStaff(member);
+}
+
+/** Holds "<Project> Team Lead" for this project (sub-project C: Team Leads manage their project's Pod Reps). */
+export function isProjectTeamLead(member: GuildMember, projectKey: string): boolean {
+  const p = findProject(projectKey);
+  if (!p) return false;
+  const name = roleNames.projectTeamLead(p);
+  return member.roles.cache.some((r) => r.name === name);
 }
