@@ -5,7 +5,7 @@ Production target for the CyArt intern bot and its dashboard.
 | Piece | Value |
 |---|---|
 | Panel | https://dash.monkey-network.xyz · server **Intern Bot** (`951e1887`) |
-| Allocation | `us.monkey-network.xyz:5015` (1 of 1) |
+| Allocation | `eu.monkey-network.xyz:5082` (1 of 1, EU NODE; was `us.monkey-network.xyz:5015` until 2026-11-02) |
 | Repo | `https://github.com/CyArt-DevOps/dis` (public, branch `main`) |
 | Runtime | Pterodactyl Node.js egg, Docker image **Nodejs 25** |
 | Dashboard URL | https://dis.cyart.io |
@@ -91,7 +91,7 @@ so one process covers both and fits the single allocated port.
 
 ## Cloudflare (done)
 
-- `dis.cyart.io` → **CNAME** → `usa.monkey-network.xyz`, **Proxied**
+- `dis.cyart.io` → **CNAME** → `eu.monkey-network.xyz`, **Proxied**
 - Configuration Rule *"dis.cyart.io - SSL Full for MonkeyBytes origin"*:
   `http.host eq "dis.cyart.io"` → SSL: **Full**
 
@@ -103,7 +103,7 @@ cyart.io hostnames rely on strict validation.
 
 Startup → `GIT REPO ADDRESS` = repo URL, `INSTALL BRANCH` = `main`,
 `MAIN FILE` = `dist/index.js`, `AUTO UPDATE` = on, `USER UPLOADED FILES` = off.
-Whitelabel → `dis.cyart.io` on port `5015`.
+Whitelabel → `dis.cyart.io` on port `5082`. If the server changes node, update this port and the Cloudflare CNAME.
 
 ## Remaining steps (need credentials — do these yourself)
 
