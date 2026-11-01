@@ -29,6 +29,45 @@ export interface MemberDto {
   leadership: Leadership;
 }
 
+/**
+ * Sub-project C: outbox event "rep.changed" — a /rep assign | remove in Discord. EMS refreshes the members' leadership and
+ * writes rep_role_events (source "discord"). Changes EMS asked for (POST / DELETE /api/v1/reps) are not echoed back.
+ */
+export interface RepChangedEvent {
+  action: "assigned" | "removed" | "replaced";
+  discordUserId: string;
+  project: string; // lower-case key
+  module: number;
+  pod: number;
+  replacedDiscordUserId: string | null;
+  source: "discord";
+  actorDiscordId: string;
+  reason: string | null;
+  leadership: Leadership;
+  replacedLeadership: Leadership | null;
+}
+
+export function repChangedPayload(e: Omit<RepChangedEvent, "source" | "project" | "replacedDiscordUserId" | "reason" | "replacedLeadership"> & {
+  project: string;
+  replacedDiscordUserId?: string | null;
+  reason?: string | null;
+  replacedLeadership?: Leadership | null;
+}): RepChangedEvent {
+  return {
+    action: e.action,
+    discordUserId: e.discordUserId,
+    project: e.project.toLowerCase(),
+    module: e.module,
+    pod: e.pod,
+    replacedDiscordUserId: e.replacedDiscordUserId ?? null,
+    source: "discord",
+    actorDiscordId: e.actorDiscordId,
+    reason: e.reason ?? null,
+    leadership: e.leadership,
+    replacedLeadership: e.replacedLeadership ?? null,
+  };
+}
+
 export interface OrgDto {
   projects: { key: string; name: string; active: boolean; modules: { num: number; name: string; pods: number[] }[] }[];
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { leadershipFromRoleNames, memberDto, orgDto, projectKeyOf } from "../src/services/integrationPayloads.js";
+import { leadershipFromRoleNames, memberDto, orgDto, projectKeyOf, repChangedPayload } from "../src/services/integrationPayloads.js";
 
 const projects = [
   { key: "dt", name: "DarkTrace", modules: 2, podsPerModule: 3, active: true, moduleNames: { "2": "Team Velocity" }, moduleChannels: false, moduleVoice: false },
@@ -86,5 +86,15 @@ describe("orgDto", () => {
       modules: [ { num: 1, name: "Module 1", pods: [1, 2, 3] }, { num: 2, name: "Team Velocity", pods: [1, 2, 3] } ],
     });
     expect(o.projects[1]).toEqual({ key: "ct", name: "CTEM", active: false, modules: [] });
+  });
+});
+
+describe("repChangedPayload (sub-project C)", () => {
+  const lead = { teamLeadOf: [], coLeadOf: [], podRepOf: [{ project: "dt", module: 1, pod: 2 }] };
+  it("fills source 'discord', lower-cases the project and nulls what is not given", () => {
+    expect(repChangedPayload({ action: "assigned", discordUserId: "111111111111111111", project: "DT", module: 1, pod: 2, actorDiscordId: "222222222222222222", leadership: lead })).toEqual({
+      action: "assigned", discordUserId: "111111111111111111", project: "dt", module: 1, pod: 2, replacedDiscordUserId: null,
+      source: "discord", actorDiscordId: "222222222222222222", reason: null, leadership: lead, replacedLeadership: null,
+    });
   });
 });
