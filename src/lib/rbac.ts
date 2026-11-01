@@ -30,6 +30,7 @@ export function canManageLeadership(member: GuildMember): boolean {
 export function isProjectTeamLead(member: GuildMember, projectKey: string): boolean {
   const p = findProject(projectKey);
   if (!p) return false;
-  const name = roleNames.projectTeamLead(p);
-  return member.roles.cache.some((r) => r.name === name);
+  // Without case, like the rep roles (findRoleCi): a hand-renamed "cybreach team lead" still counts.
+  const name = roleNames.projectTeamLead(p).toLowerCase();
+  return member.roles.cache.some((r) => r.name.toLowerCase() === name);
 }

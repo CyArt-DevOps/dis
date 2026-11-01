@@ -15,4 +15,9 @@ describe("isProjectTeamLead", () => {
     expect(isProjectTeamLead(member("CyBreach Co-Lead"), "cybreach")).toBe(false);
     expect(isProjectTeamLead(member("CyBreach Team Lead"), "nope")).toBe(false);
   });
+  it("matches the role name without case", () => {
+    expect(isProjectTeamLead(member("cybreach team lead"), "cybreach")).toBe(true);
+    expect(isProjectTeamLead(member("CYBREACH TEAM LEAD"), "cybreach")).toBe(true);
+    expect(isProjectTeamLead(member("cybreach co-lead"), "cybreach")).toBe(false);
+  });
 });
