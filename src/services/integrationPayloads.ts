@@ -76,15 +76,14 @@ type ProjectLike = Pick<ProjectDef, "key" | "name" | "modules" | "podsPerModule"
 
 /**
  * Leads live only as Discord roles ("<Project> Team Lead", "<Project> M<m> P<n> Representative"),
- * so derive them from role names. Rep roles are matched without case and only for pods that exist.
+ * so derive them from role names. All are matched without case (like rbac and findRoleCi); rep roles only for pods that exist.
  */
 export function leadershipFromRoleNames(names: string[], projects: ProjectLike[]): Leadership {
-  const has = new Set(names);
   const lower = new Set(names.map((n) => n.toLowerCase()));
   const out: Leadership = { teamLeadOf: [], coLeadOf: [], podRepOf: [] };
   for (const p of projects) {
-    if (has.has(roleNames.projectTeamLead(p as ProjectDef))) out.teamLeadOf.push(p.key);
-    if (has.has(roleNames.projectCoLead(p as ProjectDef))) out.coLeadOf.push(p.key);
+    if (lower.has(roleNames.projectTeamLead(p as ProjectDef).toLowerCase())) out.teamLeadOf.push(p.key);
+    if (lower.has(roleNames.projectCoLead(p as ProjectDef).toLowerCase())) out.coLeadOf.push(p.key);
     for (let m = 1; m <= p.modules; m++)
       for (let pd = 1; pd <= p.podsPerModule; pd++)
         if (lower.has(roleNames.podRep(p as ProjectDef, m, pd).toLowerCase()))

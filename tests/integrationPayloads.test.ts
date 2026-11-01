@@ -7,6 +7,11 @@ const projects = [
 ];
 
 describe("leadershipFromRoleNames", () => {
+  it("matches lead roles without case, like the /rep permission check", () => {
+    const r = leadershipFromRoleNames(["darktrace team lead", "ctem co-lead"], projects);
+    expect(r.teamLeadOf.length).toBe(1);
+    expect(r.coLeadOf.length).toBe(1);
+  });
   it("maps '<Project> Team Lead' and '<Project> Co-Lead' to project keys", () => {
     expect(leadershipFromRoleNames(["Intern", "DarkTrace Team Lead", "CTEM Co-Lead", "Team Lead"], projects)).toEqual({
       teamLeadOf: ["dt"],
