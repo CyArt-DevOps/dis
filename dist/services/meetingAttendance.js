@@ -6,6 +6,8 @@ import { audienceLabel, cleanupPeopleMeetingChannel, grantAudienceVoiceAccess, r
 import { runEscalations } from "./escalation.js";
 import { grantVoiceAccess } from "./meeting.js";
 import { formatInTz } from "../lib/time.js";
+import { applyAttendanceTimes, reexcuseApprovedLeave } from "./meetingFinalize.js";
+import { emitAttendance } from "./meetingSync.js";
 let client = null;
 export function initMeetingAttendance(c) {
     client = c;
@@ -218,42 +220,40 @@ async function backfillFromVoiceSessions(meeting) {
     return fixed;
 }
 /**
- * Re-check approved leave for anyone still marked absent. Leave approved DURING
- * a meeting (or right after it started) should excuse the member rather than
- * count against them and feed escalation.
+ * Make the attendance final. Runs while the meeting is still `monitoring`; the
+ * scheduler marks it completed only after this resolves, so a throw (or a crash)
+ * leaves it to be redone on the next sweep. Every step is idempotent.
  */
-async function reexcuseApprovedLeave(meeting) {
-    const absent = await prisma.meetingAttendance.findMany({
-        where: { meetingId: meeting.id, status: "absent" },
-        select: { id: true, userId: true },
-    });
-    let excused = 0;
-    for (const row of absent) {
-        if (!(await hasApprovedLeaveCovering(meeting.guildId, row.userId, meeting.startAt)))
-            continue;
-        await prisma.meetingAttendance.update({
-            where: { id: row.id },
-            data: { status: "excused", leaveStatus: "approved" },
-        });
-        excused++;
+export async function finalizeMeetingAttendance(meeting) {
+    // Last pass over joins: anyone still in the VC at the last moment and anyone
+    // the sweep missed entirely. Best effort; the voice-session backfill covers a
+    // failed tick.
+    if (client?.guilds.cache.get(meeting.guildId)) {
+        await handleMeetingTick(meeting).catch((err) => logger.warn({ err, meeting: meeting.id }, "Final attendance tick failed"));
     }
-    return excused;
+    await backfillFromVoiceSessions(meeting).catch((err) => logger.warn({ err, meeting: meeting.id }, "Attendance backfill failed"));
+    // Time in the VC within the meeting; joined but < 70 % → left_early (Phase 3 §3.2).
+    // These two decide the final rows, so their errors propagate (retry next sweep).
+    await applyAttendanceTimes(meeting);
+    // Approved leave wins over absent and left_early, so it runs last.
+    await reexcuseApprovedLeave(meeting);
 }
-/** At meeting end: generate the attendance report into #attendance-reports. */
+/**
+ * After the meeting is completed (rows already final): send EMS the attendance,
+ * post the report to #attendance-reports, escalate, clean up.
+ */
 export async function handleMeetingEnd(meeting) {
+    // Final rows to EMS (Phase 3 §3.4) first, so nothing below can hold it back.
+    await emitAttendance(meeting.id).catch((err) => logger.warn({ err, meeting: meeting.id }, "Attendance event enqueue failed"));
     if (!client)
         return;
     const guild = client.guilds.cache.get(meeting.guildId);
     if (!guild)
         return;
-    // Final pass before the report is written: anyone still in the VC at the last
-    // moment, anyone the sweep missed entirely, and anyone whose leave landed late.
-    await handleMeetingTick(meeting).catch((err) => logger.warn({ err, meeting: meeting.id }, "Final attendance tick failed"));
-    await backfillFromVoiceSessions(meeting).catch((err) => logger.warn({ err, meeting: meeting.id }, "Attendance backfill failed"));
-    await reexcuseApprovedLeave(meeting).catch((err) => logger.warn({ err, meeting: meeting.id }, "Leave re-check failed"));
     const rows = await prisma.meetingAttendance.findMany({ where: { meetingId: meeting.id } });
     const present = rows.filter((r) => r.status === "present");
     const late = rows.filter((r) => r.status === "late");
+    const leftEarly = rows.filter((r) => r.status === "left_early");
     const excused = rows.filter((r) => r.status === "excused");
     const absent = rows.filter((r) => r.status === "absent");
     const organizer = `<@${meeting.organizerId}>`;
@@ -262,7 +262,7 @@ export async function handleMeetingEnd(meeting) {
         .setColor(absent.length > 0 ? 0xed4245 : 0x57f287)
         .addFields({ name: "Date / Time", value: formatInTz(meeting.startAt), inline: true }, { name: "Duration", value: `${meeting.durationMin} min`, inline: true }, { name: "Organizer", value: organizer, inline: true }, { name: "Audience", value: audienceLabel(meeting), inline: true }, { name: "Voice channel", value: `<#${meeting.voiceChannelId}>`, inline: true }, { name: "Expected", value: String(rows.length), inline: true }, {
         name: "Summary",
-        value: `Present: **${present.length}**   Late: **${late.length}**   Excused: **${excused.length}**   Absent: **${absent.length}**`,
+        value: `Present: **${present.length}**   Late: **${late.length}**   Left early: **${leftEarly.length}**   Excused: **${excused.length}**   Absent: **${absent.length}**`,
     })
         .setTimestamp(new Date());
     const lineFor = (r) => `- ${r.fullName ?? `<@${r.userId}>`} : ${r.project ?? "?"} M${r.module ?? "?"} P${r.pod ?? "?"} (<@${r.userId}>)`;
@@ -280,6 +280,13 @@ export async function handleMeetingEnd(meeting) {
             .join("\n");
         embed.addFields({ name: `Late arrivals (${late.length})`, value: list.slice(0, 1024) });
     }
+    if (leftEarly.length > 0) {
+        const list = leftEarly
+            .slice(0, 15)
+            .map((r) => `- ${r.fullName ?? `<@${r.userId}>`} : ${Math.round(r.secondsAttended / 60)} of ${meeting.durationMin} minutes`)
+            .join("\n");
+        embed.addFields({ name: `Left early (${leftEarly.length})`, value: list.slice(0, 1024) });
+    }
     const ch = attendanceReportsChannel(guild);
     if (ch) {
         await ch.send({ embeds: [embed] }).catch((err) => logger.warn({ err, meeting: meeting.id }, "Could not post attendance report"));
@@ -287,7 +294,7 @@ export async function handleMeetingEnd(meeting) {
     else {
         logger.warn("No #attendance-reports channel — run /setup");
     }
-    logger.info({ meeting: meeting.id, present: present.length, late: late.length, excused: excused.length, absent: absent.length }, "Attendance report generated");
+    logger.info({ meeting: meeting.id, present: present.length, late: late.length, leftEarly: leftEarly.length, excused: excused.length, absent: absent.length }, "Attendance report generated");
     // Escalate repeat unexcused absentees (3/5/7/10 thresholds).
     await runEscalations(guild, absent.map((r) => ({
         userId: r.userId,

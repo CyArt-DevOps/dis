@@ -4,6 +4,7 @@ import { roleNames, moduleLabel } from "../lib/names.js";
 import { logger } from "../core/logger.js";
 import { prisma } from "../core/db.js";
 import { logEmbed, postLog } from "../lib/log.js";
+import { enqueueEvent } from "./emsOutbox.js";
 export const IDS = {
     begin: "onboard:begin",
     name: "onboard:name", // full-name modal
@@ -220,6 +221,15 @@ export async function assignRoles(member, a) {
             registrationDate: existing?.registrationDate ?? new Date(),
             verificationStatus: "verified",
         },
+    });
+    // Tell EMS the member's placement changed (first verification or /assign).
+    await enqueueEvent("member.assigned", {
+        id: member.id,
+        fullName,
+        batch: a.batch,
+        project: p.key, // the loaded (lowercase) key, not whatever an open menu carried
+        module: a.moduleNum ?? null,
+        pod: a.podNum ?? null,
     });
     // Rename to "Full Name | Project" (configurable). Owner cannot be renamed.
     try {

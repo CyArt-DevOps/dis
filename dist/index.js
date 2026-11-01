@@ -17,10 +17,13 @@ import { registerVoiceTracking } from "./events/voiceTracking.js";
 import { closeAllOpenSessions, closeStaleSessionsOnBoot, reopenActiveSessions, startAttendanceSweep, stopAttendanceSweep, } from "./services/attendance.js";
 import { initMeetings, restoreGrants } from "./services/meeting.js";
 import { setMeetingHooks, startScheduler, stopScheduler } from "./services/meetingScheduler.js";
-import { handleMeetingEnd, handleMeetingStart, handleMeetingTick, initMeetingAttendance, } from "./services/meetingAttendance.js";
+import { handleMeetingEnd, finalizeMeetingAttendance, handleMeetingStart, handleMeetingTick, initMeetingAttendance, } from "./services/meetingAttendance.js";
 import { leaveHandlers } from "./interactions/leave.js";
 import { startMonthlySummary, stopMonthlySummary } from "./services/monthlySummary.js";
+import { startOutbox, stopOutbox } from "./services/emsOutbox.js";
+import { warmMemberCache } from "./services/memberCache.js";
 import { verificationHandlers } from "./interactions/verification.js";
+import { emsLinkHandlers } from "./interactions/emsLink.js";
 import { ticketHandlers } from "./interactions/tickets.js";
 import { startTicketArchiveSweep, stopTicketArchiveSweep } from "./services/tickets.js";
 import { startScheduledMessages, stopScheduledMessages, } from "./services/scheduledMessages.js";
@@ -62,6 +65,8 @@ async function main() {
     registerAllCommands();
     for (const h of verificationHandlers)
         registry.registerHandler(h);
+    for (const h of emsLinkHandlers)
+        registry.registerHandler(h);
     for (const h of ticketHandlers)
         registry.registerHandler(h);
     for (const h of leaveHandlers)
@@ -84,6 +89,7 @@ async function main() {
     setMeetingHooks({
         onStart: handleMeetingStart,
         onTick: handleMeetingTick,
+        onFinalize: finalizeMeetingAttendance,
         onEnd: handleMeetingEnd,
     });
     client.once(Events.ClientReady, () => {
@@ -100,6 +106,13 @@ async function main() {
         void restoreGrants();
         startScheduler(client);
         startMonthlySummary(client);
+        startOutbox();
+        // /v1/members reads leadership from guild.members.cache, which is only
+        // complete after a full fetch (retried with backoff until it succeeds).
+        // Non-blocking so a slow gateway can't delay startup.
+        const guild = client.guilds.cache.get(env.DISCORD_GUILD_ID);
+        if (guild)
+            void warmMemberCache(guild);
         startTicketArchiveSweep(client);
         startScheduledMessages(client);
         void startDashboard();
@@ -108,6 +121,7 @@ async function main() {
         logger.info({ signal }, "Shutting down");
         stopScheduler();
         stopMonthlySummary();
+        stopOutbox();
         stopTicketArchiveSweep();
         stopWarningSweep();
         stopHoursDigest();

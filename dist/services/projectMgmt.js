@@ -3,9 +3,11 @@ import { resolve } from "node:path";
 import { ChannelType, } from "discord.js";
 import { CONFIG_PATH, org } from "../config/loader.js";
 import { logger } from "../core/logger.js";
-import { channelNames, moduleShort, roleNames } from "../lib/names.js";
+import { prisma } from "../core/db.js";
+import { channelNames, moduleShort, podRepRoleNames, roleNames } from "../lib/names.js";
 import { bootstrapServer } from "./bootstrap.js";
 import { syncGuildCommands } from "./commandSync.js";
+import { normProject } from "./integrationPayloads.js";
 /** Choice lists in slash commands are baked at registration — refresh them. */
 async function refreshCommands() {
     await syncGuildCommands().catch((err) => logger.warn({ err }, "Slash command re-sync failed — run `npm run register` manually"));
@@ -43,6 +45,8 @@ function roleNamesOf(p) {
     }
     for (const label of Object.values(p.moduleNames ?? {}))
         names.push(`${p.name} ${label}`);
+    // Pod Representative roles last, so renames still zip old ↔ new names position by position.
+    names.push(...podRepRoleNames(p));
     return dedupe(names);
 }
 /**
@@ -109,6 +113,30 @@ export async function renameProject(guild, key, newName) {
     }
     org.projects[idx] = updated;
     persistOrg(org);
+    // Member.project stores the display name (onboarding writes p.name). Left alone,
+    // every intern of the renamed project would stop resolving to its key — and so
+    // drop out of EMS's auto-warn switch, back under the bot's own auto-warnings.
+    if (old.name !== newName) {
+        // projectKeyOf tolerates stray whitespace/case and the key form, so move every
+        // raw value that resolves the same way. Prisma can't trim in a where clause
+        // portably: fetch the guild's distinct values and match them here.
+        const targets = new Set([normProject(old.name), normProject(old.key)]);
+        const rows = await prisma.member.findMany({
+            where: { guildId: guild.id },
+            select: { project: true },
+            distinct: ["project"],
+        });
+        const matches = rows
+            .map((r) => r.project)
+            .filter((v) => v !== null && targets.has(normProject(v)));
+        if (matches.length > 0) {
+            const moved = await prisma.member.updateMany({
+                where: { guildId: guild.id, project: { in: matches } },
+                data: { project: newName },
+            });
+            logger.info({ project: key, members: moved.count }, "Member project names updated");
+        }
+    }
     logger.info({ project: key, from: old.name, to: newName }, "Project renamed");
     await refreshCommands();
 }

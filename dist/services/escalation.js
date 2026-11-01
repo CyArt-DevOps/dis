@@ -2,6 +2,8 @@ import { EmbedBuilder } from "discord.js";
 import { countAbsences } from "./attendanceStats.js";
 import { attendanceReportsChannel } from "./leave.js";
 import { logger } from "../core/logger.js";
+import { org } from "../config/loader.js";
+import { autoWarnOff, getAutoWarn } from "./autoWarn.js";
 // Configurable thresholds for unexcused absences.
 export const ESCALATIONS = [
     { count: 3, target: "teamlead", title: "Attendance warning: Team Lead notified", color: 0xfaa61a },
@@ -25,10 +27,16 @@ function targetMention(guild, target, projectName) {
             return [roleMention(guild, "Founder"), roleMention(guild, "Manager"), roleMention(guild, "HR")].join(" ");
     }
 }
-/** After a meeting, check each absentee's running total and fire escalations. */
+/**
+ * After a meeting, check each absentee's running total and fire escalations.
+ * Skipped for members of projects the EMS strictness ladder runs live (autoWarn.ts).
+ */
 export async function runEscalations(guild, absentees) {
     const ch = attendanceReportsChannel(guild);
+    const autoWarn = await getAutoWarn();
     for (const m of absentees) {
+        if (autoWarnOff(autoWarn, m.project, org.projects))
+            continue;
         const total = await countAbsences(m.userId, guild.id);
         const rule = ESCALATIONS.find((e) => e.count === total);
         if (!rule)

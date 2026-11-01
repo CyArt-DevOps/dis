@@ -3,7 +3,7 @@ import { authRoutes } from "./auth.js";
 import { legalRoutes } from "./legal.js";
 import { env } from "../config/env.js";
 import { logger } from "../core/logger.js";
-import { computeAttendance, computeByMember } from "../services/attendanceStats.js";
+import { computeAttendance, computeByMember, summarizeCounts } from "../services/attendanceStats.js";
 import { complianceForDay, defaultRange, liveVoice, pendingByUser, voiceByDay, voiceByMember, voiceOverview, } from "../services/voiceStats.js";
 import { cachedCompactCalendars, eachDay, filterOptions, memberProfile, } from "../services/calendar.js";
 import { memberInsights, orgInsights } from "../services/insights.js";
@@ -17,6 +17,7 @@ import { clearInsightsCache } from "../services/insights.js";
 import { prisma } from "../core/db.js";
 import { shiftDayKey, tzDateKey, tzName } from "../lib/time.js";
 import { dashboardHtml } from "./page.js";
+import { v1Router } from "./v1/router.js";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +39,8 @@ app.use(express.urlencoded({ extended: false }));
 // Terms of Service and Privacy Policy are public (Discord app verification needs
 // them); everything else stays behind the password gate below.
 app.use(legalRoutes);
+// EMS machine API: its own Bearer key, so it sits ahead of the staff password gate.
+app.use("/api/v1", v1Router);
 for (const h of authRoutes())
     app.use(h);
 function guildOf(req) {
@@ -383,10 +386,12 @@ app.get("/api/meetings", async (req, res) => {
         row[c.status] = c._count._all;
         byMeeting.set(c.meetingId, row);
     }
-    res.json(meetings.map((m) => ({
-        ...m,
-        counts: byMeeting.get(m.id) ?? {},
-    })));
+    // `counts` stays keyed by stored status (incl. left_early); `summary` is the
+    // same numbers with left_early counted as attended-but-flagged.
+    res.json(meetings.map((m) => {
+        const counts = byMeeting.get(m.id) ?? {};
+        return { ...m, counts, summary: summarizeCounts(counts) };
+    }));
 });
 /** Per-day voice detail for one member (used by the drill-down row). */
 app.get("/api/member/:id", async (req, res) => {
@@ -468,7 +473,7 @@ function listenOn(host, port) {
     });
 }
 /**
- * Start the dashboard on loopback only (there is no auth — see the note at the
+ * Start the dashboard (loopback unless WEB_HOST is set — see the note at the
  * top of this file).
  *
  * Both 127.0.0.1 AND ::1 are bound: browsers on Windows resolve "localhost" to

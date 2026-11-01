@@ -3,6 +3,7 @@ import { ping } from "./ping.js";
 import { setup } from "./setup.js";
 import { lead } from "./lead.js";
 import { colead } from "./colead.js";
+import { rep } from "./rep.js";
 import { announce } from "./announce.js";
 import { moderationCommands } from "./moderation.js";
 import { project } from "./project.js";
@@ -14,11 +15,13 @@ import { panel } from "./panel.js";
 import { assign } from "./assign.js";
 import { leave } from "./leave.js";
 import { schedule } from "./schedule.js";
+import { link } from "./link.js";
 export function registerAllCommands() {
     registry.registerCommand(ping);
     registry.registerCommand(setup);
     registry.registerCommand(lead);
     registry.registerCommand(colead);
+    registry.registerCommand(rep);
     registry.registerCommand(announce);
     registry.registerCommand(project);
     registry.registerCommand(ticket);
@@ -29,6 +32,7 @@ export function registerAllCommands() {
     registry.registerCommand(assign);
     registry.registerCommand(leave);
     registry.registerCommand(schedule);
+    registry.registerCommand(link);
     for (const cmd of moderationCommands)
         registry.registerCommand(cmd);
 }

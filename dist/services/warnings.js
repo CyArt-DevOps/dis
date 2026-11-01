@@ -7,6 +7,8 @@ import { shiftDayKey, tzDateKey, tzDayStartUtc } from "../lib/time.js";
 import { buildCalendars } from "./calendar.js";
 import { shortStreak } from "../lib/streak.js";
 import { notifyMember } from "./notify.js";
+import { autoWarnOff, getAutoWarn } from "./autoWarn.js";
+import { ackFollowUp } from "../lib/warnAck.js";
 /**
  * Formal warnings and the three-strike rule.
  *
@@ -17,8 +19,13 @@ import { notifyMember } from "./notify.js";
  * warning is a DM with an Acknowledge button and a deadline. Warnings that were
  * sent (acknowledged or not) count as strikes; reaching the limit puts the
  * member up for termination: reviewed by HR, or automatic in "strict" mode.
+ *
+ * Members of projects the EMS strictness ladder runs live (autoWarn.ts) get no
+ * automatic hours warnings and no automatic termination from here (Phase 4 §8).
  */
 const ACK_PREFIX = "warn:ack:";
+/** Warns mirrored from EMS (source "ems") are withdrawn in EMS, which then revokes the mirror. */
+export const EMS_MANAGED_MSG = "This warning was issued in EMS. Revoke or excuse it in EMS; the bot's copy updates automatically.";
 const STRIKE_STATUSES = ["sent", "dm-failed", "acknowledged"];
 export class WarningError extends Error {
 }
@@ -56,9 +63,10 @@ export async function runHoursSweep(guildId) {
         .filter((d) => Boolean(d))
         .sort()
         .pop();
-    const out = { checked: 0, created: 0, sent: 0, terminated: 0 };
+    const out = { checked: 0, created: 0, sent: 0, terminated: 0, emsManaged: 0 };
     if (start > settled)
         return out;
+    const autoWarn = await getAutoWarn();
     const required = Math.round(org.attendancePolicy.minHours * 3600);
     const [calendars, existing] = await Promise.all([
         buildCalendars(guildId, {}, start, settled),
@@ -78,6 +86,10 @@ export async function runHoursSweep(guildId) {
     for (const cal of calendars) {
         if (!cal.project)
             continue; // unregistered accounts aren't interns yet
+        if (autoWarnOff(autoWarn, cal.project, org.projects)) {
+            out.emsManaged++;
+            continue;
+        }
         out.checked++;
         const streak = shortStreak(cal.days, {
             settled,
@@ -110,7 +122,23 @@ export async function runHoursSweep(guildId) {
         }
     }
     if (c.mode === "strict" && botClient()) {
-        for (const cand of await terminationCandidates(guildId)) {
+        const candidates = await terminationCandidates(guildId);
+        // Defence in depth: anyone EMS has formally warned is EMS-managed, whatever
+        // their Member.project says (renamed/hand-edited project, switch not yet set).
+        // Termination is never automatic for them.
+        const emsWarned = candidates.length
+            ? new Set((await prisma.warn.findMany({
+                where: { guildId, userId: { in: candidates.map((x) => x.userId) }, source: "ems" },
+                select: { userId: true },
+            })).map((w) => w.userId))
+            : new Set();
+        for (const cand of candidates) {
+            if (autoWarnOff(autoWarn, cand.project, org.projects))
+                continue; // EMS recommends; a person decides
+            if (emsWarned.has(cand.userId)) {
+                logger.warn({ userId: cand.userId, project: cand.project }, "Automatic termination skipped: member has EMS-mirrored warnings (EMS decides)");
+                continue;
+            }
             await terminateMember(guildId, cand.userId, "Attendance system (strict mode)").catch((err) => logger.error({ err, userId: cand.userId }, "Automatic termination failed"));
             out.terminated++;
         }
@@ -218,6 +246,8 @@ export async function dismissWarning(id, guildId, reviewedBy) {
     const w = await prisma.warn.findUnique({ where: { id } });
     if (!w || w.guildId !== guildId)
         throw new WarningError("Warning not found.");
+    if (w.source === "ems")
+        throw new WarningError(EMS_MANAGED_MSG);
     await prisma.warn.update({ where: { id }, data: { status: "dismissed", reviewedBy } });
 }
 // --------------------------------------------------------------- reporting
@@ -380,9 +410,7 @@ export const warningAckHandler = {
             .setStyle(ButtonStyle.Success)
             .setDisabled(true));
         await i.update({ components: [done] });
-        await i.followUp({
-            content: `Thank you. Warning #${id} is acknowledged${late ? " (after the deadline)" : ""}. Please make sure to follow the attendance rules from now on.`,
-        });
+        await i.followUp({ content: ackFollowUp(w, Boolean(late)) });
     },
 };
 // --------------------------------------------------------------------- loop
@@ -468,6 +496,8 @@ export async function revokeWarning(id, guildId, by, reason) {
     const w = await prisma.warn.findUnique({ where: { id } });
     if (!w || w.guildId !== guildId)
         throw new WarningError("Warning not found.");
+    if (w.source === "ems")
+        throw new WarningError(EMS_MANAGED_MSG);
     if (w.status === "revoked" || w.status === "dismissed")
         throw new WarningError("This warning is already withdrawn.");
     const why = String(reason ?? "").trim();

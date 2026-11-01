@@ -1,4 +1,22 @@
 import { prisma } from "../core/db.js";
+/**
+ * Turn per-status counts (keys as stored: present, late, left_early, absent,
+ * excused) into the numbers every view shows. left_early is attended-but-flagged:
+ * it counts toward the attendance rate and is reported on its own.
+ */
+export function summarizeCounts(c) {
+    const present = c.present ?? 0;
+    const late = c.late ?? 0;
+    const leftEarly = c.left_early ?? 0;
+    const absent = c.absent ?? 0;
+    const excused = c.excused ?? 0;
+    const attended = present + late + leftEarly;
+    const expected = attended + absent;
+    return {
+        present, late, leftEarly, absent, excused, expected, attended,
+        pct: expected ? Math.round((attended / expected) * 1000) / 10 : 0,
+    };
+}
 function whereFrom(f) {
     const where = {
         meeting: { guildId: f.guildId },
@@ -31,6 +49,7 @@ export async function computeAttendance(f) {
     });
     let present = 0;
     let late = 0;
+    let leftEarly = 0;
     let absent = 0;
     let excused = 0;
     let delaySum = 0;
@@ -45,6 +64,12 @@ export async function computeAttendance(f) {
                 late++;
                 delaySum += r.minutesLate;
                 break;
+            case "left_early":
+                // Keeps minutesLate from the first join: an early leaver can also be late.
+                leftEarly++;
+                if (r.minutesLate > 0)
+                    delaySum += r.minutesLate;
+                break;
             case "absent":
                 absent++;
                 break;
@@ -53,13 +78,14 @@ export async function computeAttendance(f) {
                 break;
         }
     }
-    const counted = present + late + absent;
-    const attended = present + late;
+    const counted = present + late + leftEarly + absent;
+    const attended = present + late + leftEarly;
     return {
         records: rows.length,
         totalMeetings: meetings.size,
         present,
         late,
+        leftEarly,
         absent,
         excused,
         attendancePct: counted > 0 ? Math.round((attended / counted) * 1000) / 10 : 0,
@@ -97,6 +123,7 @@ export async function computeByMember(f) {
                 pod: r.pod,
                 present: 0,
                 late: 0,
+                leftEarly: 0,
                 absent: 0,
                 excused: 0,
                 total: 0,
@@ -108,14 +135,16 @@ export async function computeByMember(f) {
             s.present++;
         else if (r.status === "late")
             s.late++;
+        else if (r.status === "left_early")
+            s.leftEarly++;
         else if (r.status === "absent")
             s.absent++;
         else if (r.status === "excused")
             s.excused++;
     }
     for (const s of map.values()) {
-        s.total = s.present + s.late + s.absent;
-        s.pct = s.total > 0 ? Math.round(((s.present + s.late) / s.total) * 1000) / 10 : 0;
+        s.total = s.present + s.late + s.leftEarly + s.absent;
+        s.pct = s.total > 0 ? Math.round(((s.present + s.late + s.leftEarly) / s.total) * 1000) / 10 : 0;
     }
     return Array.from(map.values());
 }

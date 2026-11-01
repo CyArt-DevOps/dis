@@ -3,6 +3,7 @@ import { org, activeProjects } from "../config/loader.js";
 import { logger } from "../core/logger.js";
 import { readState, updateState } from "../core/state.js";
 import { tzDateKey, tzDayStartUtc } from "../lib/time.js";
+import { placeNames } from "../lib/names.js";
 import { buildCalendars } from "./calendar.js";
 import { holidayMap, isWorkingDay } from "./holidays.js";
 /**
@@ -51,7 +52,7 @@ function targetFor(guild, p, m) {
         if (ch)
             return { channel: ch, label: `${p.name} · Module ${m.module}` };
     }
-    const general = textChannel(guild, "general", p.name.toUpperCase());
+    const general = textChannel(guild, "general", placeNames.projectCategory(p));
     return general ? { channel: general, label: p.name } : null;
 }
 function line(m, required, loginByMin, day) {

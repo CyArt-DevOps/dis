@@ -2,7 +2,8 @@ import { ChannelType, EmbedBuilder, MessageFlags, PermissionFlagsBits, Permissio
 import { activeProjects, org } from "../config/loader.js";
 import { logger } from "../core/logger.js";
 import { readState, updateState } from "../core/state.js";
-import { roleNames, channelNames, moduleShort } from "../lib/names.js";
+import { roleNames, channelNames, placeNames, capRoleName, legacyPodRep, podRepRoleNames, } from "../lib/names.js";
+import { logEmbed, postLog } from "../lib/log.js";
 import { beginButton, IDS as ONBOARD_IDS } from "./onboarding.js";
 import { LEAVE_IDS, leavePanelButton, leavePanelEmbed } from "./leave.js";
 import { TICKET_IDS, panelButton, panelEmbed, projectPanelButton, projectPanelEmbed, } from "./tickets.js";
@@ -46,10 +47,12 @@ const ROLE_PERMS = {
     Intern: [],
 };
 async function getOrCreateRole(guild, name, opts = {}) {
+    name = capRoleName(name);
     const perms = opts.permissions !== undefined
         ? new PermissionsBitField(opts.permissions)
         : undefined;
-    const existing = guild.roles.cache.find((r) => r.name === name);
+    const lower = name.toLowerCase();
+    const existing = guild.roles.cache.find((r) => opts.ignoreCase ? r.name.toLowerCase() === lower : r.name === name);
     if (existing) {
         // Keep permissions in sync on re-run (idempotent)
         if (perms && existing.permissions.bitfield !== perms.bitfield) {
@@ -107,7 +110,8 @@ async function getOrCreateVoiceChannel(guild, name, parent, overwrites) {
         permissionOverwrites: overwrites,
     });
 }
-async function ensureRoles(guild) {
+/** Exported for tests. */
+export async function ensureRoles(guild) {
     const map = new Map();
     const set = (key, role) => map.set(key, role);
     for (const a of org.roles.admin) {
@@ -166,7 +170,82 @@ async function ensureRoles(guild) {
             }
         }
     }
-    return map;
+    // Rep roles last: they are optional, so they must never use up the room the
+    // membership roles above need (Discord caps a guild at 250 roles).
+    const repRoles = await ensurePodRepRoles(guild, map);
+    return { roles: map, repRoles };
+}
+/** Discord's per-guild role limit (including @everyone). */
+export const GUILD_ROLE_LIMIT = 250;
+/**
+ * Pod Representative roles (Phase 6): no server perms; their powers live in EMS.
+ * Never throws: a full guild or a Discord error stops rep-role creation only, and
+ * the rest of bootstrap carries on. Legacy "<Project> <custom module> P<n>
+ * Representative" roles are renamed in place so their holders keep them.
+ */
+async function ensurePodRepRoles(guild, map) {
+    const report = { wanted: 0, created: 0, renamed: 0, notCreated: 0, shortfall: 0 };
+    const findCi = (name) => {
+        const lower = name.toLowerCase();
+        return guild.roles.cache.find((r) => r.name.toLowerCase() === lower);
+    };
+    const missing = [];
+    for (const p of activeProjects()) {
+        for (let m = 1; m <= p.modules; m++) {
+            for (let pd = 1; pd <= p.podsPerModule; pd++) {
+                report.wanted++;
+                const key = `podrep:${p.key}:${m}:${pd}`;
+                const name = roleNames.podRep(p, m, pd);
+                const existing = findCi(name);
+                if (existing) {
+                    map.set(key, await getOrCreateRole(guild, name, { color: Colors.Aqua, permissions: [], ignoreCase: true }));
+                    continue;
+                }
+                const legacy = findCi(legacyPodRep(p, m, pd));
+                if (legacy) {
+                    try {
+                        await legacy.setName(name, "Pod Representative roles are numeric (Phase 6b)");
+                        map.set(key, legacy);
+                        report.renamed++;
+                        logger.info({ from: legacy.name, to: name }, "Renamed legacy Pod Representative role");
+                        continue;
+                    }
+                    catch (err) {
+                        logger.warn({ role: legacy.name, err: err.message }, "Could not rename legacy Pod Representative role");
+                    }
+                }
+                missing.push({ key, name });
+            }
+        }
+    }
+    if (missing.length === 0)
+        return report;
+    const total = guild.roles.cache.size + missing.length;
+    if (total > GUILD_ROLE_LIMIT) {
+        report.shortfall = total - GUILD_ROLE_LIMIT;
+        report.notCreated = missing.length;
+        report.error = `creating ${missing.length} Pod Representative role(s) would exceed Discord's ${GUILD_ROLE_LIMIT}-role limit by ${report.shortfall}`;
+        logger.warn({ missing: missing.length, roles: guild.roles.cache.size }, `Skipping Pod Representative roles: ${report.error}`);
+        return report;
+    }
+    for (let i = 0; i < missing.length; i++) {
+        const { key, name } = missing[i];
+        try {
+            map.set(key, await getOrCreateRole(guild, name, { color: Colors.Aqua, permissions: [], ignoreCase: true }));
+            report.created++;
+        }
+        catch (err) {
+            const code = err.code;
+            report.notCreated = missing.length - i;
+            report.error =
+                code === 30005
+                    ? `Discord's ${GUILD_ROLE_LIMIT}-role limit reached (30005)`
+                    : `role create failed: ${err.message}`;
+            logger.warn({ role: name, code, err: err.message }, "Stopped creating Pod Representative roles");
+            break;
+        }
+    }
+    return report;
 }
 function adminRoleIds(roles) {
     return org.roles.admin
@@ -432,7 +511,7 @@ async function buildProject(guild, roles, p) {
             id: teamLeadId,
             allow: [VIEW, SEND, CONNECT, SPEAK, MANAGE_CH],
         });
-    const cat = await getOrCreateCategory(guild, p.name.toUpperCase(), projectOverwrites);
+    const cat = await getOrCreateCategory(guild, placeNames.projectCategory(p), projectOverwrites);
     await getOrCreateTextChannel(guild, channelNames.projectGeneral(), cat);
     await getOrCreateTextChannel(guild, channelNames.projectAnnouncements(), cat);
     // Per-project support channel: project members see it and open tickets here;
@@ -458,7 +537,7 @@ async function buildProject(guild, roles, p) {
     ];
     if (teamLeadId)
         projectVcOverwrites.push({ id: teamLeadId, allow: [VIEW, CONNECT, SPEAK, MANAGE_CH] });
-    await getOrCreateVoiceChannel(guild, `${p.name} General VC`, cat, projectVcOverwrites);
+    await getOrCreateVoiceChannel(guild, placeNames.projectGeneralVc(p), cat, projectVcOverwrites);
     // Leadership sub-area: build as channels under same category (Discord has no nested categories)
     const leadershipOverwrites = [
         denyEveryone(guild),
@@ -476,7 +555,7 @@ async function buildProject(guild, roles, p) {
         });
     await getOrCreateTextChannel(guild, `lead-${p.key}-${channelNames.teamLeadChat()}`, cat, leadershipOverwrites);
     await getOrCreateTextChannel(guild, `lead-${p.key}-${channelNames.coleadChat()}`, cat, leadershipOverwrites);
-    await getOrCreateVoiceChannel(guild, `${p.name} ${channelNames.leadershipVc()}`, cat, leadershipOverwrites);
+    await getOrCreateVoiceChannel(guild, placeNames.leadershipVc(p), cat, leadershipOverwrites);
     // Per-module categories with per-pod channels
     for (let m = 1; m <= p.modules; m++) {
         const moduleRoleId = roles.get(`module:${p.key}:${m}`)?.id;
@@ -492,7 +571,7 @@ async function buildProject(guild, roles, p) {
                 id: teamLeadId,
                 allow: [VIEW, SEND, CONNECT, SPEAK, MANAGE_CH],
             });
-        const modCat = await getOrCreateCategory(guild, `${p.name} ${moduleShort(p, m)}`, modOverwrites);
+        const modCat = await getOrCreateCategory(guild, placeNames.moduleCategory(p, m), modOverwrites);
         // Pod-based modules have no module-wide chat (members live in pod channels),
         // so module-scoped meeting reminders had nowhere to land and fell through to
         // the voice channel. Give each such module a read-only `#<key>-mN-info`
@@ -539,7 +618,7 @@ async function buildProject(guild, roles, p) {
                     await getOrCreateTextChannel(guild, `${p.key}-m${m}-resources`, modCat, moduleChanOverwrites);
                 }
             }
-            await getOrCreateVoiceChannel(guild, `${p.name} ${moduleShort(p, m)} VC`, modCat, moduleChanOverwrites);
+            await getOrCreateVoiceChannel(guild, placeNames.moduleVc(p, m), modCat, moduleChanOverwrites);
         }
         for (let pd = 1; pd <= p.podsPerModule; pd++) {
             const podRoleId = roles.get(`pod:${p.key}:${m}:${pd}`)?.id;
@@ -560,7 +639,7 @@ async function buildProject(guild, roles, p) {
                 });
             await getOrCreateTextChannel(guild, `${p.key}-m${m}-p${pd}-${channelNames.podChat()}`, modCat, podOverwrites);
             await getOrCreateTextChannel(guild, `${p.key}-m${m}-p${pd}-${channelNames.podResources()}`, modCat, podOverwrites);
-            await getOrCreateVoiceChannel(guild, `${p.name} ${moduleShort(p, m)} P${pd} VC`, modCat, podOverwrites);
+            await getOrCreateVoiceChannel(guild, placeNames.podVc(p, m, pd), modCat, podOverwrites);
         }
     }
 }
@@ -714,6 +793,10 @@ async function orderRoles(guild, roles) {
     for (const p of activeProjects())
         push(`pcolead:${p.key}`);
     for (const p of activeProjects())
+        for (let m = 1; m <= p.modules; m++)
+            for (let pd = 1; pd <= p.podsPerModule; pd++)
+                push(`podrep:${p.key}:${m}:${pd}`);
+    for (const p of activeProjects())
         push(`project:${p.key}`);
     for (const p of activeProjects())
         for (let m = 1; m <= p.modules; m++)
@@ -787,9 +870,7 @@ async function dedupCategoryChildren(guild, cat) {
 }
 /** Run dedup on every category that belongs to the project. */
 async function dedupProject(guild, p) {
-    const projectCatNames = new Set([p.name.toUpperCase()]);
-    for (let m = 1; m <= p.modules; m++)
-        projectCatNames.add(`${p.name} M${m}`);
+    const projectCatNames = new Set(placeNames.allCategories(p));
     for (const cat of guild.channels.cache.values()) {
         if (cat.type !== ChannelType.GuildCategory)
             continue;
@@ -798,7 +879,8 @@ async function dedupProject(guild, p) {
         await dedupCategoryChildren(guild, cat);
     }
 }
-async function pruneProject(guild, p) {
+/** Exported for tests. */
+export async function pruneProject(guild, p) {
     // Module categories named "<Project> M<n>" with n > modules.
     const catPrefix = `${p.name} M`;
     for (const c of guild.channels.cache.values()) {
@@ -857,11 +939,57 @@ async function pruneProject(guild, p) {
             logger.info({ project: p.key, role: role.name }, "Pruned role");
         }
     }
+    // Pod Representative roles of pods that no longer exist ("<Project> M<m> P<n> Representative",
+    // any case), plus leftover legacy custom-label ones ("<Project> <label> P<n> Representative")
+    // whose pod is gone or whose numeric replacement already exists. Never anything else that
+    // merely ends in " Representative".
+    const wanted = new Set(podRepRoleNames(p).map((n) => n.toLowerCase()));
+    const present = new Set([...guild.roles.cache.values()].map((r) => r.name.toLowerCase()));
+    const repPrefix = `${p.name} M`.toLowerCase();
+    const legacyPrefixes = Object.entries(p.moduleNames ?? {}).map(([num, label]) => ({
+        mod: Number(num),
+        prefix: `${p.name} ${label} P`.toLowerCase(),
+    }));
+    for (const role of [...guild.roles.cache.values()]) {
+        const lower = role.name.toLowerCase();
+        if (wanted.has(lower))
+            continue;
+        let remove = false;
+        if (lower.startsWith(repPrefix)) {
+            const rep = lower.slice(repPrefix.length).match(/^(\d+) p(\d+) representative$/);
+            if (rep)
+                remove = Number(rep[1]) > p.modules || Number(rep[2]) > p.podsPerModule;
+        }
+        for (const { mod, prefix } of legacyPrefixes) {
+            if (remove || !lower.startsWith(prefix))
+                continue;
+            const pod = lower.slice(prefix.length).match(/^(\d+) representative$/);
+            if (!pod)
+                continue;
+            const gone = !Number.isInteger(mod) || mod > p.modules || Number(pod[1]) > p.podsPerModule;
+            remove = gone || present.has(roleNames.podRep(p, mod, Number(pod[1])).toLowerCase());
+        }
+        if (!remove)
+            continue;
+        await auditRepHolders(guild, role);
+        await role.delete("Pod pruned").catch(() => { });
+        logger.info({ project: p.key, role: role.name }, "Pruned role");
+    }
+}
+/** Before a held rep role is deleted, record who held it (they lose it silently otherwise). */
+async function auditRepHolders(guild, role) {
+    const ids = [...role.members.values()].map((m) => m.id);
+    if (ids.length === 0)
+        return;
+    const SHOW = 40;
+    const list = ids.slice(0, SHOW).map((id) => `<@${id}>`).join(", ");
+    const more = ids.length > SHOW ? ` …and ${ids.length - SHOW} more` : "";
+    await postLog(guild, "audit", logEmbed("Pod Representative role pruned", 0xed4245).setDescription(`\`${role.name}\` is being deleted (pod no longer exists). Holders: ${list}${more}`));
 }
 export async function bootstrapServer(guild) {
     logger.info({ guild: guild.name }, "Bootstrap start");
     const before = guild.roles.cache.size;
-    const roles = await ensureRoles(guild);
+    const { roles, repRoles } = await ensureRoles(guild);
     await buildInformation(guild, roles);
     await buildHr(guild, roles);
     await buildPrivateOffice(guild, roles, org.categories.managerOffice, ["admin:Founder", "admin:Manager"]);
@@ -878,6 +1006,6 @@ export async function bootstrapServer(guild) {
     await orderRoles(guild, roles);
     const after = guild.roles.cache.size;
     logger.info({ guild: guild.name }, "Bootstrap done");
-    return { rolesCreated: Math.max(0, after - before), projectsBuilt: projects.length };
+    return { rolesCreated: Math.max(0, after - before), projectsBuilt: projects.length, repRoles };
 }
 //# sourceMappingURL=bootstrap.js.map

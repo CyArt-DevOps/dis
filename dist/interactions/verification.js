@@ -2,6 +2,8 @@ import { MessageFlags } from "discord.js";
 import { IDS, assignRoles, batchMenu, isVerified, moduleMenu, nameModal, podMenu, projectMenu, savePendingName, validateFullName, } from "../services/onboarding.js";
 import { findProject } from "../config/loader.js";
 import { moduleLabel } from "../lib/names.js";
+import { linkButtonRow } from "./emsLink.js";
+import { integrationEnabled } from "../services/emsClient.js";
 function customId(i) {
     if (i.isButton() || i.isStringSelectMenu() || i.isModalSubmit())
         return i.customId;
@@ -94,9 +96,12 @@ async function finalize(i, assignment) {
     const missingNote = result.missing.length > 0
         ? `\n\nWarning — these roles do not exist yet (run /setup first): ${result.missing.join(", ")}`
         : "";
+    const linkNote = integrationEnabled()
+        ? "\n\n**Last step:** link your CyArt portal account — click the button below (or run `/link` anytime)."
+        : "";
     await i.editReply({
-        content: `Verification complete. Roles assigned:\n- ${result.assigned.join("\n- ")}` + missingNote,
-        components: [],
+        content: `Verification complete. Roles assigned:\n- ${result.assigned.join("\n- ")}` + missingNote + linkNote,
+        components: integrationEnabled() ? [linkButtonRow()] : [],
     });
 }
 export const projectHandler = {

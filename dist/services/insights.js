@@ -3,6 +3,7 @@ import { org } from "../config/loader.js";
 import { shiftDayKey, tzDateKey, tzDayStartUtc } from "../lib/time.js";
 import { buildCalendars } from "./calendar.js";
 import { holidayMap, isWorkingDay } from "./holidays.js";
+import { summarizeCounts } from "./attendanceStats.js";
 function policy() {
     return org.attendancePolicy;
 }
@@ -373,20 +374,9 @@ async function computeOrgInsights(guildId, from, to) {
         openTickets,
         warnings,
         meetings: meetings.map((mt) => {
-            const c = counts.get(mt.id) ?? {};
-            const present = c.present ?? 0;
-            const late = c.late ?? 0;
-            const absent = c.absent ?? 0;
-            const excused = c.excused ?? 0;
-            const expected = present + late + absent;
-            return {
-                ...mt,
-                present,
-                late,
-                absent,
-                excused,
-                pct: expected ? Math.round(((present + late) / expected) * 1000) / 10 : 0,
-            };
+            // left_early counts as attended (toward pct) and is shown on its own.
+            const { present, late, leftEarly, absent, excused, pct } = summarizeCounts(counts.get(mt.id) ?? {});
+            return { ...mt, present, late, leftEarly, absent, excused, pct };
         }),
     };
 }
@@ -497,14 +487,24 @@ export async function memberInsights(guildId, userId, month, from, to) {
                 lv.short++;
         }
     }
-    const ms = { present: 0, late: 0, absent: 0, excused: 0, lateMin: 0 };
+    // lateRows: late arrivals, including early leavers who were also late.
+    const ms = { present: 0, late: 0, leftEarly: 0, absent: 0, excused: 0, lateMin: 0, lateRows: 0 };
     for (const mt of meetings) {
         if (mt.status === "present")
             ms.present++;
         else if (mt.status === "late") {
             ms.late++;
             ms.lateMin += mt.minutesLate;
+            ms.lateRows++;
             lv.meetingLate++;
+        }
+        else if (mt.status === "left_early") {
+            ms.leftEarly++;
+            if (mt.minutesLate > 0) {
+                ms.lateMin += mt.minutesLate;
+                ms.lateRows++;
+                lv.meetingLate++;
+            }
         }
         else if (mt.status === "absent") {
             ms.absent++;
@@ -513,7 +513,7 @@ export async function memberInsights(guildId, userId, month, from, to) {
         else if (mt.status === "excused")
             ms.excused++;
     }
-    const expected = ms.present + ms.late + ms.absent;
+    const expected = ms.present + ms.late + ms.leftEarly + ms.absent;
     // Rank inside the member's project by lifetime compliance (good days, then rate).
     let projectRank = null;
     if (member?.project) {
@@ -567,10 +567,11 @@ export async function memberInsights(guildId, userId, month, from, to) {
         meetingStats: {
             present: ms.present,
             late: ms.late,
+            leftEarly: ms.leftEarly,
             absent: ms.absent,
             excused: ms.excused,
-            pct: expected ? Math.round(((ms.present + ms.late) / expected) * 1000) / 10 : 0,
-            avgMinutesLate: ms.late ? Math.round(ms.lateMin / ms.late) : 0,
+            pct: expected ? Math.round(((ms.present + ms.late + ms.leftEarly) / expected) * 1000) / 10 : 0,
+            avgMinutesLate: ms.lateRows ? Math.round(ms.lateMin / ms.lateRows) : 0,
         },
         warns: warns.map((w) => ({ reason: w.reason, by: modName.get(w.modId) ?? w.modId, at: w.createdAt })),
         tickets,

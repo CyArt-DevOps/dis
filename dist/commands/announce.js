@@ -1,7 +1,7 @@
 import { ChannelType, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, MessageFlags, } from "discord.js";
 import { hasAdminRole, isStaff } from "../lib/rbac.js";
 import { activeProjects, findProject, org } from "../config/loader.js";
-import { roleNames } from "../lib/names.js";
+import { roleNames, placeNames } from "../lib/names.js";
 const TARGETS = [
     { name: "Entire org", value: "org" },
     { name: "Project", value: "project" },
@@ -79,7 +79,7 @@ export const announce = {
                 await interaction.reply({ content: "Unknown project.", flags: MessageFlags.Ephemeral });
                 return;
             }
-            const ch = findText("announcements", p.name.toUpperCase());
+            const ch = findText("announcements", placeNames.projectCategory(p));
             if (ch) {
                 const role = interaction.guild.roles.cache.find((r) => r.name === roleNames.project(p));
                 await ch.send({
@@ -97,7 +97,7 @@ export const announce = {
                 await interaction.reply({ content: "Unknown project.", flags: MessageFlags.Ephemeral });
                 return;
             }
-            const projectAnn = findText("announcements", p.name.toUpperCase());
+            const projectAnn = findText("announcements", placeNames.projectCategory(p));
             const role = interaction.guild.roles.cache.find((r) => r.name === roleNames.module(p, moduleNum));
             if (projectAnn) {
                 await projectAnn.send({

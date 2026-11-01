@@ -19,6 +19,11 @@ let dmPausedUntil = 0;
 export function dmPaused() {
     return Date.now() < dmPausedUntil;
 }
+/** Discord quarantined the bot's DMs (20026): stop attempting DMs for a while. */
+export function pauseDms() {
+    dmPausedUntil = Date.now() + DM_PAUSE_MS;
+    logger.warn("Discord DM quarantine detected: using private threads for 6 hours");
+}
 export async function notifyMember(guild, userId, payload) {
     const client = botClient();
     if (!client)
@@ -30,10 +35,8 @@ export async function notifyMember(guild, userId, payload) {
             return { via: "dm", channelId: msg.channelId, messageId: msg.id };
         }
         catch (err) {
-            if (err.code === QUARANTINE_CODE) {
-                dmPausedUntil = Date.now() + DM_PAUSE_MS;
-                logger.warn("Discord DM quarantine detected: using private threads for 6 hours");
-            }
+            if (err.code === QUARANTINE_CODE)
+                pauseDms();
         }
     }
     const thread = await privateThreadFor(guild, userId, payload.threadName);
