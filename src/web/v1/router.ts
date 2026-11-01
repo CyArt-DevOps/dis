@@ -12,6 +12,7 @@ import { shiftDayKey, tzDayStartUtc } from "../../lib/time.js";
 import { assignedChannelIds, indexChannels, voiceDay, type ChannelLite } from "../../services/assignedVoice.js";
 import { meetingsRouter } from "./meetings.js";
 import { ladderRouter } from "./ladder.js";
+import { repsRouter } from "./reps.js";
 
 /**
  * Read API for the EMS portal. Bearer DIS_API_KEY; no cookie. Mounted ahead of
@@ -28,6 +29,8 @@ const STARTED_AT = new Date(Date.now() - Math.round(process.uptime() * 1000)).to
 v1Router.use("/meetings", meetingsRouter);
 // Strictness ladder (Phase 4): /dm, /settings/auto-warn, /warns.
 v1Router.use(ladderRouter);
+// Pod Rep changes asked for by EMS (sub-project C): POST / DELETE /reps.
+v1Router.use("/reps", repsRouter);
 
 v1Router.get("/health", (_req, res) => {
   res.json({ ok: true, botOnline: botGuild(env.DISCORD_GUILD_ID) !== null, now: new Date().toISOString(), startedAt: STARTED_AT });
