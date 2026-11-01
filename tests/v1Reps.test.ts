@@ -56,8 +56,9 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 beforeEach(() => {
   guild = { roles: { cache: rolesCache(roleList) }, members: { cache: new Map(), fetch: vi.fn() } };
-  guild.members.fetch.mockImplementation(async (id: string) => {
-    const m = guild!.members.cache.get(id);
+  guild.members.fetch.mockImplementation(async (opts: { user: string; force: boolean }) => {
+    expect(opts.force).toBe(true); // a stale cached member would report old leadership between per-pod DELETEs
+    const m = guild!.members.cache.get(opts.user);
     if (!m) throw Object.assign(new Error("Unknown Member"), { code: 10007 });
     return m;
   });
@@ -106,6 +107,14 @@ describe("POST /api/v1/reps", () => {
     expect(body.replacedLeadership).toEqual([{ discordUserId: OLD, leadership: { teamLeadOf: [], coLeadOf: [], podRepOf: [] } }]);
     expect(names(old)).toEqual([]);
     expect(names(a)).toContain("CyBreach M1 P1 Representative");
+  });
+  it("RC-DIS-02: replace whose add fails → the old rep keeps the role, so the pod is never left without a rep", async () => {
+    const old = addMember(OLD, ["CyBreach M1 P1 Representative"]);
+    const a = addMember(A) as unknown as { roles: { add: unknown } };
+    a.roles.add = vi.fn().mockRejectedValue(new Error("Missing Permissions"));
+    const res = await send("POST", { ...assign, replace: true });
+    expect(res.status).not.toBe(200);
+    expect(names(old)).toContain("CyBreach M1 P1 Representative");
   });
   it("400 on a bad body; 422 unknown pod / not in the server / rep role missing; 503 bot offline", async () => {
     addMember(A);

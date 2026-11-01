@@ -136,7 +136,8 @@ export function podRepHolders(guild: Guild, projectKey: string, moduleNum: numbe
 /**
  * Adds the rep role plus the project / module / pod membership roles, so the rep is in the pod.
  * Throws before changing anything if the rep role itself does not exist yet, or (one rep per pod) if someone else
- * holds it and `replace` is not set; with `replace` the old holders lose the rep role first.
+ * holds it and `replace` is not set; with `replace` the old holders lose the rep role last, so a failed add never
+ * leaves the pod without a rep.
  */
 export async function assignPodRep(args: PodRepArgs): Promise<string[]> {
   const p = findProject(args.projectKey);
@@ -147,7 +148,6 @@ export async function assignPodRep(args: PodRepArgs): Promise<string[]> {
   if (!repRole) throw new Error("Rep role missing — run /setup");
   const holders = podRepHolders(guild, p.key, args.moduleNum, args.podNum, args.member.id);
   if (holders.length && !args.replace) throw new PodHasRepError(holders, `${p.name} M${args.moduleNum} P${args.podNum}`);
-  for (const h of holders) await h.roles.remove(repRole, `${actorTag(args.actor)} replaced Pod Representative`);
   const roles: Role[] = [repRole];
   for (const name of [
     roleNames.project(p),
@@ -164,6 +164,7 @@ export async function assignPodRep(args: PodRepArgs): Promise<string[]> {
     }
     applied.push(r.name);
   }
+  for (const h of holders) await h.roles.remove(repRole, `${actorTag(args.actor)} replaced Pod Representative`);
   const embed = logEmbed("Pod Representative assigned", 0x1abc9c)
     .setDescription(`<@${args.member.id}> → ${p.name} M${args.moduleNum} P${args.podNum}`)
     .addFields({ name: "By", value: actorMention(args.actor) });

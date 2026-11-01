@@ -58,7 +58,7 @@ async function resolve(res: Res, b: { discordUserId: string; projectKey: string;
     return null;
   }
   try {
-    return { guild, p, member: await guild.members.fetch(b.discordUserId) };
+    return { guild, p, member: await guild.members.fetch({ user: b.discordUserId, force: true }) };
   } catch (err) {
     if ((err as { code?: number })?.code === 10007) fail(res, 422, "not_in_guild", "This person is not in the Discord server.");
     else {
