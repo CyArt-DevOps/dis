@@ -88,6 +88,7 @@ warningsRouter.post("/", json, async (req, res) => {
     if (err instanceof WarningError) return fail(res, 503, "bot_unavailable", err.message);
     throw err;
   }
+  logger.info({ warn: row.id, by: b.issuedBy }, "Warning issued from EMS");
   const sent = await prisma.warn.findUnique({ where: { id: row.id } });
   return res.status(201).json(warnDto(sent!));
 });
@@ -154,6 +155,7 @@ leavesRouter.post("/", json, async (req, res) => {
       { dates: b.days, type: b.type, reason: b.reason, approvedBy: `${EMS_APPROVER}${b.by}`.slice(0, 60) },
       { uid: b.uid }
     );
+    logger.info({ leave: out.id, by: b.by }, "Leave granted from EMS");
     return res.status(201).json(leaveDto((await prisma.leaveRequest.findUnique({ where: { id: out.id } }))!));
   } catch (err) {
     if (err instanceof LeaveInputError) return fail(res, 422, "invalid_leave", err.message);
