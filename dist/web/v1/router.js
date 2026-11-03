@@ -14,6 +14,7 @@ import { meetingsRouter } from "./meetings.js";
 import { ladderRouter } from "./ladder.js";
 import { repsRouter } from "./reps.js";
 import { holidaysRouter } from "./holidays.js";
+import { leavesRouter, warningsRouter } from "./hrSync.js";
 /**
  * Read API for the EMS portal. Bearer DIS_API_KEY; no cookie. Mounted ahead of
  * the dashboard password gate in server.ts.
@@ -31,6 +32,9 @@ v1Router.use(ladderRouter);
 v1Router.use("/reps", repsRouter);
 // Holiday sync with EMS (spec 2026-11-03): list, add, remove.
 v1Router.use("/holidays", holidaysRouter);
+// HR actions sync with EMS (spec 2026-11-03): warnings and leave, both ways.
+v1Router.use("/warnings", warningsRouter);
+v1Router.use("/leaves", leavesRouter);
 v1Router.get("/health", (_req, res) => {
     res.json({ ok: true, botOnline: botGuild(env.DISCORD_GUILD_ID) !== null, now: new Date().toISOString(), startedAt: STARTED_AT });
 });

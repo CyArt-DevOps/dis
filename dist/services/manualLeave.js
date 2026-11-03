@@ -13,10 +13,29 @@ import { emitAttendance } from "./meetingSync.js";
  * `approvedDays` lists the exact days. Everything downstream (calendar,
  * compliance, meeting excusal, escalation) already honours that shape, so a
  * dashboard grant behaves exactly like one approved in a Discord ticket.
- * `reviewedById` carries a "dashboard:" prefix so these rows are recognisable
- * and only they can be revoked from the dashboard.
+ * `reviewedById` carries a "dashboard:" prefix so these rows are recognisable.
+ * The dashboard can revoke any approved leave, including one approved in Discord.
  */
 export const DASHBOARD_REVIEWER = "dashboard:";
+/** Prefix on the approver's name for leave granted from EMS (HR actions sync). */
+export const EMS_APPROVER = "EMS: ";
+/** Where an approved leave was decided: EMS may withdraw its own and dashboard grants, not Discord approvals. */
+export function leaveOrigin(reviewedById) {
+    if (reviewedById?.startsWith(`${DASHBOARD_REVIEWER}${EMS_APPROVER}`))
+        return "ems";
+    return reviewedById?.startsWith(DASHBOARD_REVIEWER) ? "dashboard" : "discord";
+}
+/** The IST days a leave covers: its exact approved days, else every day of its range. */
+export function leaveDays(row) {
+    const exact = (row.approvedDays ?? "").split(",").filter(Boolean);
+    if (exact.length)
+        return exact;
+    const days = [];
+    const last = tzDateKey(row.endAt);
+    for (let d = tzDateKey(row.startAt); d <= last; d = shiftDayKey(d, 1))
+        days.push(d);
+    return days;
+}
 const TYPES = ["casual", "sick", "exam"];
 export class LeaveInputError extends Error {
 }
@@ -101,13 +120,14 @@ async function resendAttendance(meetingIds) {
     for (const id of meetingIds)
         await emitAttendance(id).catch(() => { });
 }
-export async function grantManualLeave(guildId, userId, input) {
+export async function grantManualLeave(guildId, userId, input, opts = {}) {
     const v = validate(input);
     const member = await prisma.member.findUnique({ where: { id: userId }, select: { guildId: true } });
     if (!member || member.guildId !== guildId)
         throw new LeaveInputError("Member not found.");
     const row = await prisma.leaveRequest.create({
         data: {
+            ...(opts.uid ? { uid: opts.uid } : {}),
             guildId,
             userId,
             type: v.type,
@@ -139,20 +159,17 @@ export async function grantManualLeave(guildId, userId, input) {
     clearInsightsCache();
     return { id: row.id, days: v.days, excusedMeetings };
 }
-/** Undo a dashboard grant. Leaves approved in Discord are not touched here. */
+/** Undo an approved leave, wherever it was approved. */
 export async function revokeManualLeave(guildId, userId, leaveId) {
     const row = await prisma.leaveRequest.findUnique({ where: { id: leaveId } });
     if (!row || row.guildId !== guildId || row.userId !== userId)
         throw new LeaveInputError("Leave not found.");
-    if (!row.reviewedById?.startsWith(DASHBOARD_REVIEWER)) {
-        throw new LeaveInputError("Only leave granted from the dashboard can be revoked here.");
-    }
     if (row.status !== "approved")
         throw new LeaveInputError("This leave is not active.");
     await prisma.leaveRequest.update({ where: { id: leaveId }, data: { status: "revoked" } });
     // Put back what this grant excused, unless another approved leave still covers
     // the meeting: no join → absent; joined → present / late / left_early again.
-    const days = (row.approvedDays ?? "").split(",").filter(Boolean);
+    const days = leaveDays(row);
     const changed = new Set();
     if (days.length) {
         for (const r of await meetingRowsOn(guildId, userId, days)) {
