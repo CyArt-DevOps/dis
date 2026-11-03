@@ -62,3 +62,9 @@ export async function removeHoliday(guildId: string, id: number): Promise<void> 
   await prisma.holiday.delete({ where: { id } });
   clearHolidayCache();
 }
+
+/** Remove a date if present. Used by the EMS sync, where "already gone" is success. */
+export async function removeHolidayByDay(guildId: string, day: string): Promise<void> {
+  await prisma.holiday.deleteMany({ where: { guildId, day } });
+  clearHolidayCache();
+}

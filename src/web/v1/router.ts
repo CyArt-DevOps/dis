@@ -13,6 +13,7 @@ import { assignedChannelIds, indexChannels, voiceDay, type ChannelLite } from ".
 import { meetingsRouter } from "./meetings.js";
 import { ladderRouter } from "./ladder.js";
 import { repsRouter } from "./reps.js";
+import { holidaysRouter } from "./holidays.js";
 
 /**
  * Read API for the EMS portal. Bearer DIS_API_KEY; no cookie. Mounted ahead of
@@ -31,6 +32,8 @@ v1Router.use("/meetings", meetingsRouter);
 v1Router.use(ladderRouter);
 // Pod Rep changes asked for by EMS (sub-project C): POST / DELETE /reps.
 v1Router.use("/reps", repsRouter);
+// Holiday sync with EMS (spec 2026-11-03): list, add, remove.
+v1Router.use("/holidays", holidaysRouter);
 
 v1Router.get("/health", (_req, res) => {
   res.json({ ok: true, botOnline: botGuild(env.DISCORD_GUILD_ID) !== null, now: new Date().toISOString(), startedAt: STARTED_AT });
