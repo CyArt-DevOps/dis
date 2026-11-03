@@ -17,7 +17,7 @@ describe("strictness_ladder migration", () => {
     expect(sql).toContain("PRIMARY KEY (`key`)");
   });
   it("the schema matches: externalUid @unique, model BotSetting", () => {
-    expect(schema).toMatch(/externalUid String\? @unique @db\.VarChar\(36\)/);
+    expect(schema).toMatch(/externalUid String\? @unique @default\(uuid\(\)\) @db\.VarChar\(36\)/);
     expect(schema).toMatch(/model BotSetting \{/);
   });
 });

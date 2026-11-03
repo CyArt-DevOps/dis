@@ -116,11 +116,13 @@ model Warn {
   dmMessageId String? @db.VarChar(32)
   // Verified HR member who sent or dismissed it
   reviewedBy String? @db.VarChar(80)
-  // EMS formal warning uid for source "ems" rows (Phase 4): POST/DELETE /api/v1/warns key on it
-  externalUid String? @unique @db.VarChar(36)
+  // The uid both platforms share (HR actions sync). For source "ems" rows it is the EMS formal warning uid (Phase 4).
+  externalUid String? @unique @default(uuid()) @db.VarChar(36)
+  updatedAt DateTime @default(now()) @updatedAt
 
   @@index([guildId, userId])
   @@index([guildId, status])
+  @@index([guildId, updatedAt, id])
 }
 
 /// Org-wide non-working days. They count like weekends everywhere.
@@ -240,9 +242,13 @@ model LeaveRequest {
   reviewedById String?
   reviewedAt   DateTime?
   createdAt    DateTime @default(now())
+  // The uid both platforms share (HR actions sync).
+  uid          String   @unique @default(uuid()) @db.VarChar(36)
+  updatedAt    DateTime @default(now()) @updatedAt
 
   @@index([guildId, status])
   @@index([userId, status])
+  @@index([guildId, updatedAt, id])
 }
 
 model ScheduledMessage {

@@ -458,7 +458,7 @@ export function ProfilePage({
                 right={
                   <div className="flex flex-col items-end gap-1">
                     <Badge tone={l.status === "approved" ? "good" : l.status === "pending" ? "warn" : "bad"}>{l.status}</Badge>
-                    {viaDashboard && l.status === "approved" ? (
+                    {l.status === "approved" ? (
                       <button type="button" onClick={() => revoke(l.id)} className="text-[11px] text-dim hover:text-rose-300">
                         revoke
                       </button>
