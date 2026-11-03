@@ -4,11 +4,12 @@ vi.mock("../src/core/logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn()
 
 const findMany = vi.fn();
 const update = vi.fn();
+const updateMany = vi.fn();
 const create = vi.fn();
 const upsert = vi.fn();
 const executeRaw = vi.fn();
 vi.mock("../src/core/db.js", () => ({
-  prisma: { voiceSession: { findMany, update, create }, member: { upsert }, $executeRaw: executeRaw },
+  prisma: { voiceSession: { findMany, update, updateMany, create }, member: { upsert }, $executeRaw: executeRaw },
 }));
 
 const { reconcileVoiceSessions } = await import("../src/services/attendance.js");
@@ -21,9 +22,10 @@ function clientWith(channelId: string) {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-03-10T10:00:00Z"));
-  for (const m of [findMany, update, create, upsert, executeRaw]) m.mockReset();
+  for (const m of [findMany, update, updateMany, create, upsert, executeRaw]) m.mockReset();
   upsert.mockResolvedValue({});
   update.mockResolvedValue({});
+  updateMany.mockResolvedValue({ count: 1 });
   create.mockResolvedValue({});
   executeRaw.mockResolvedValue(1);
 });
@@ -39,7 +41,7 @@ describe("reconcileVoiceSessions: missed channel move", () => {
     // old session credited 1h and closed at now; channelId never rewritten
     expect(executeRaw).toHaveBeenCalled();
     expect(executeRaw.mock.calls[0]).toContain(3600);
-    expect(update).toHaveBeenCalledWith({ where: { id: 7 }, data: { creditedUpTo: now, seconds: 3600 } });
+    expect(updateMany).toHaveBeenCalledWith({ where: { id: 7, creditedUpTo: null, leftAt: null }, data: { creditedUpTo: now, seconds: 3600 } });
     expect(update).toHaveBeenCalledWith({ where: { id: 7 }, data: { leftAt: now } });
     expect(update.mock.calls.some(([a]) => "channelId" in a.data)).toBe(false);
 

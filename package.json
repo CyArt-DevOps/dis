@@ -40,6 +40,7 @@
     "db:renumber": "tsx scripts/renumber-ids.ts",
     "db:renumber:discord": "tsx scripts/fix-discord-after-renumber.ts",
     "db:fix-autoid": "tsx scripts/fix-auto-id-cache.ts",
+    "db:repair-hours": "tsx scripts/repair-voice-hours.ts",
     "hr": "tsx scripts/hr-accounts.ts"
   },
   "dependencies": {

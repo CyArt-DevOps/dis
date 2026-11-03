@@ -11,12 +11,16 @@ const DAY_SECONDS = 24 * HOUR;
  * is ~6h, so anything beyond this is a tracking artifact (a missed leave event,
  * a session left open across bot downtime) rather than real presence.
  */
-const MAX_SESSION_SECONDS = 12 * HOUR;
+export const MAX_SESSION_SECONDS = 12 * HOUR;
 
 /** How often open sessions are checkpointed into Attendance and reconciled. */
 export const FLUSH_INTERVAL_MS = 60_000;
 
+/** Sessions written concurrently by the flush sweep and the shutdown close. */
+const WRITE_BATCH = 25;
+
 let flushTimer: NodeJS.Timeout | null = null;
+let sweeping = false;
 
 /** Day bucket (YYYY-MM-DD) in the ORG timezone, not UTC. */
 function dayKey(d: Date): string {
@@ -71,34 +75,45 @@ async function addDailySeconds(
  * daily Attendance buckets, splitting across LOCAL midnight, then advance the
  * mark. Idempotent: calling it twice with the same `upTo` credits nothing the
  * second time, so the flush sweep can run as often as it likes.
+ *
+ * The mark is claimed BEFORE any seconds are added, and only if it is still the
+ * value this row was read with. Flushes and join/leave events run concurrently
+ * from their own reads; without the claim, each one credited the same span and
+ * a slow writer could move the mark backwards so the span was credited again.
+ * If the process dies between the claim and the add, the worst case is one
+ * minute under-credited, never hours over.
  */
 async function creditSession(s: SessionRow, upTo: Date): Promise<number> {
-  const from = s.creditedUpTo ?? s.joinedAt;
-  if (upTo.getTime() <= from.getTime()) return 0;
+  let row = s;
+  // Two tries: a lost claim re-reads once, so a close still credits its tail.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const from = row.creditedUpTo ?? row.joinedAt;
+    if (upTo.getTime() <= from.getTime()) return 0;
 
-  const already = s.seconds ?? 0;
-  const remaining = Math.max(0, MAX_SESSION_SECONDS - already);
-  if (remaining === 0) {
-    // Session is over the per-session cap — stop crediting but keep the mark
+    const already = row.seconds ?? 0;
+    const remaining = Math.max(0, MAX_SESSION_SECONDS - already);
+    const rawSeconds = Math.round((upTo.getTime() - from.getTime()) / 1000);
+    const end =
+      rawSeconds > remaining ? new Date(from.getTime() + remaining * 1000) : upTo;
+    // Over the per-session cap this is empty: stop crediting but keep the mark
     // moving so we don't re-walk the same span every sweep.
-    await prisma.voiceSession.update({ where: { id: s.id }, data: { creditedUpTo: upTo } });
-    return 0;
-  }
+    const buckets = splitByTzDay(from, end);
+    const credited = buckets.reduce((sum, b) => sum + b.seconds, 0);
 
-  const rawSeconds = Math.round((upTo.getTime() - from.getTime()) / 1000);
-  const end =
-    rawSeconds > remaining ? new Date(from.getTime() + remaining * 1000) : upTo;
+    const claim = await prisma.voiceSession.updateMany({
+      where: { id: row.id, creditedUpTo: row.creditedUpTo, leftAt: null },
+      data: { creditedUpTo: upTo, seconds: already + credited },
+    });
+    if (claim.count === 1) {
+      for (const b of buckets) await addDailySeconds(row.guildId, row.userId, b.day, b.seconds);
+      return credited;
+    }
 
-  let credited = 0;
-  for (const b of splitByTzDay(from, end)) {
-    await addDailySeconds(s.guildId, s.userId, b.day, b.seconds);
-    credited += b.seconds;
+    const fresh = await prisma.voiceSession.findUnique({ where: { id: row.id } });
+    if (!fresh || fresh.leftAt) return 0;
+    row = fresh;
   }
-  await prisma.voiceSession.update({
-    where: { id: s.id },
-    data: { creditedUpTo: upTo, seconds: already + credited },
-  });
-  return credited;
+  return 0;
 }
 
 /** Credit up to `endTime` and mark the session closed. */
@@ -160,12 +175,18 @@ export async function flushOpenSessions(): Promise<number> {
   if (open.length === 0) return 0;
   const now = new Date();
   let credited = 0;
-  for (const s of open) {
-    try {
-      if ((await creditSession(s, now)) > 0) credited++;
-    } catch (err) {
-      logger.warn({ err, session: s.id }, "Could not checkpoint voice session");
-    }
+  // In parallel batches: one at a time, 300+ people in voice took longer than
+  // the sweep interval over the remote database.
+  for (let i = 0; i < open.length; i += WRITE_BATCH) {
+    await Promise.all(
+      open.slice(i, i + WRITE_BATCH).map(async (s) => {
+        try {
+          if ((await creditSession(s, now)) > 0) credited++;
+        } catch (err) {
+          logger.warn({ err, session: s.id }, "Could not checkpoint voice session");
+        }
+      })
+    );
   }
   return credited;
 }
@@ -267,9 +288,8 @@ export async function closeAllOpenSessions(): Promise<number> {
   // took minutes over the remote database and the host had to kill the
   // process. Anything not closed here is recovered at boot from the last
   // checkpoint (closeStaleSessionsOnBoot).
-  const BATCH = 25;
-  for (let i = 0; i < open.length; i += BATCH) {
-    await Promise.all(open.slice(i, i + BATCH).map((s) => closeSession(s, now).catch(() => {})));
+  for (let i = 0; i < open.length; i += WRITE_BATCH) {
+    await Promise.all(open.slice(i, i + WRITE_BATCH).map((s) => closeSession(s, now).catch(() => {})));
   }
   logger.info({ count: open.length }, "Closed open voice sessions on shutdown");
   return open.length;
@@ -285,19 +305,32 @@ export async function reopenActiveSessions(client: Client): Promise<number> {
   return opened;
 }
 
+/**
+ * One checkpoint + reconcile. Returns false if skipped because the previous one
+ * is still running: setInterval doesn't wait, and overlapping sweeps were how
+ * members came to be credited for two or three times their real voice hours.
+ */
+export async function runAttendanceSweep(client: Client): Promise<boolean> {
+  if (sweeping) {
+    logger.warn("Attendance sweep still running, skipping this tick");
+    return false;
+  }
+  sweeping = true;
+  try {
+    await reconcileVoiceSessions(client);
+    await flushOpenSessions();
+  } catch (err) {
+    logger.error({ err }, "Attendance sweep failed");
+  } finally {
+    sweeping = false;
+  }
+  return true;
+}
+
 /** Periodic checkpoint + reconcile. Started after ClientReady. */
 export function startAttendanceSweep(client: Client): void {
   if (flushTimer) clearInterval(flushTimer);
-  flushTimer = setInterval(() => {
-    void (async () => {
-      try {
-        await reconcileVoiceSessions(client);
-        await flushOpenSessions();
-      } catch (err) {
-        logger.error({ err }, "Attendance sweep failed");
-      }
-    })();
-  }, FLUSH_INTERVAL_MS);
+  flushTimer = setInterval(() => void runAttendanceSweep(client), FLUSH_INTERVAL_MS);
   logger.info({ everyMs: FLUSH_INTERVAL_MS }, "Attendance sweep started");
 }
 
