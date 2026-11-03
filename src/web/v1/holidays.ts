@@ -1,7 +1,7 @@
 import express from "express";
 import { env } from "../../config/env.js";
 import { prisma } from "../../core/db.js";
-import { HolidayInputError, addHoliday, removeHolidayByDay } from "../../services/holidays.js";
+import { HolidayInputError, addHoliday, isRealDay, removeHolidayByDay } from "../../services/holidays.js";
 
 /**
  * Holiday sync with EMS (spec 2026-11-03 §6), mounted at /api/v1/holidays behind the v1 Bearer guard. EMS holds the
@@ -12,12 +12,6 @@ import { HolidayInputError, addHoliday, removeHolidayByDay } from "../../service
  */
 export const holidaysRouter = express.Router();
 holidaysRouter.use(express.json({ limit: "8kb" }));
-
-const isRealDay = (v: unknown): v is string => {
-  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
-  const d = new Date(`${v}T00:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
-};
 
 holidaysRouter.get("/", async (req, res) => {
   const { from } = req.query;

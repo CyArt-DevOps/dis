@@ -37,17 +37,25 @@ export function isWorkingDay(day: string, holidays: Map<string, string>): boolea
 
 export class HolidayInputError extends Error {}
 
+/** YYYY-MM-DD that exists on the calendar (Date.parse alone lets 2027-02-31 through). */
+export function isRealDay(v: unknown): v is string {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+}
+
 export async function listHolidays(guildId: string) {
   return prisma.holiday.findMany({ where: { guildId }, orderBy: { day: "asc" } });
 }
 
 export async function addHoliday(guildId: string, input: { day?: unknown; name?: unknown; addedBy?: unknown }) {
   const day = String(input.day ?? "");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(Date.parse(day + "T00:00:00Z"))) {
+  if (!isRealDay(day)) {
     throw new HolidayInputError("Pick a valid date.");
   }
   const name = String(input.name ?? "").trim();
-  if (name.length < 2 || name.length > 120) throw new HolidayInputError("Name must be 2–120 characters.");
+  // Same limits as EMS, or a date with a short EMS name could never sync here.
+  if (name.length < 1 || name.length > 120) throw new HolidayInputError("Name must be 1–120 characters.");
   const addedBy = String(input.addedBy ?? "").trim().slice(0, 80) || null;
   const exists = await prisma.holiday.findUnique({ where: { guildId_day: { guildId, day } } });
   if (exists) throw new HolidayInputError(`${day} is already a holiday (${exists.name}).`);

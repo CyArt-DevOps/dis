@@ -106,6 +106,10 @@ describe("/api/v1/holidays", () => {
     expect(rows).toHaveLength(0);
   });
 
+  it("accepts a one-character name, as EMS does", async () => {
+    expect((await post({ day: "2026-11-04", name: "X" })).status).toBe(201);
+  });
+
   it("HS-D7 removes a date and holidayMap drops it at once", async () => {
     seed("g1", "2026-11-04", "Diwali Leave");
     expect((await holidayMap("g1")).has("2026-11-04")).toBe(true);
