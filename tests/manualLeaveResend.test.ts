@@ -64,6 +64,15 @@ describe("dashboard leave and meeting attendance", () => {
     expect(out.excusedMeetings).toBe(1);
     expect(rows.map((r) => r.status)).toEqual(["absent", "excused", "present"]);
   });
+  it("HG-DIS-01 a half-day grant stores the window as HH:MM (the column is VARCHAR(5))", async () => {
+    const { prisma } = await import("../src/core/db.js");
+    const create = prisma.leaveRequest.create as unknown as ReturnType<typeof vi.fn>;
+    create.mockClear();
+    await grantManualLeave("g1", "u1", {
+      dates: ["2026-10-27"], type: "casual", reason: "appointment", approvedBy: "Asha", half: { start: "13:00:00", end: " 16:00" },
+    });
+    expect(create.mock.calls[0]![0].data).toMatchObject({ halfDay: true, halfStart: "13:00", halfEnd: "16:00" });
+  });
   it("HG-DIS-01 a half-day grant refuses a range or a bad window", async () => {
     const base = { type: "casual", reason: "appointment", approvedBy: "Asha" };
     await expect(grantManualLeave("g1", "u1", { ...base, dates: ["2026-10-27", "2026-10-28"], half: { start: "13:00", end: "16:00" } })).rejects.toThrow(/single date/);
