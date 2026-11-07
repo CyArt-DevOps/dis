@@ -40,7 +40,14 @@ v1Router.use("/warnings", warningsRouter);
 v1Router.use("/leaves", leavesRouter);
 
 v1Router.get("/health", (_req, res) => {
-  res.json({ ok: true, botOnline: botGuild(env.DISCORD_GUILD_ID) !== null, now: new Date().toISOString(), startedAt: STARTED_AT });
+  res.json({
+    ok: true,
+    botOnline: botGuild(env.DISCORD_GUILD_ID) !== null,
+    now: new Date().toISOString(),
+    startedAt: STARTED_AT,
+    // EMS sends half-day leave only to builds that say they understand it (spec 2026-11-07 §7).
+    features: { halfDayLeave: true },
+  });
 });
 
 /** All members (or those changed since `?updatedSince=ISO`), with leadership from live roles. */

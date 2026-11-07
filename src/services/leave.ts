@@ -20,6 +20,7 @@ import { org } from "../config/loader.js";
 import { logger } from "../core/logger.js";
 import { formatDuration, formatInTz, inclusiveDaySpan, tzDateKey } from "../lib/time.js";
 import { ticketsCategoryWithRoom } from "./ticketCategory.js";
+import { leaveCoversAt } from "../lib/halfDay.js";
 
 export const LEAVE_IDS = {
   approve: "leave:approve", // leave:approve:<id>
@@ -390,6 +391,7 @@ export async function decideLeave(
  * True if an approved leave covers the given instant — matched by CALENDAR DAY
  * in the configured timezone. For leaves with `approvedDays` set (exam leave),
  * only those specific days count as excused, not the full requested range.
+ * A half-day leave covers only its 3 h window on that day.
  */
 export async function hasApprovedLeaveCovering(
   guildId: string,
@@ -398,15 +400,10 @@ export async function hasApprovedLeaveCovering(
 ): Promise<boolean> {
   const rows = await prisma.leaveRequest.findMany({
     where: { guildId, userId, status: "approved" },
-    select: { startAt: true, endAt: true, approvedDays: true },
+    select: { startAt: true, endAt: true, approvedDays: true, halfDay: true, halfStart: true, halfEnd: true },
   });
-  const day = tzDateKey(at);
-  return rows.some((r) => {
-    if (r.approvedDays && r.approvedDays.length > 0) {
-      return r.approvedDays.split(",").includes(day);
-    }
-    return tzDateKey(r.startAt) <= day && day <= tzDateKey(r.endAt);
-  });
+  // A half day covers only its window: a meeting outside it is not excused.
+  return rows.some((r) => leaveCoversAt(r, at));
 }
 
 export function listLeaves(guildId: string, userId: string) {

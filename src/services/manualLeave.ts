@@ -6,6 +6,7 @@ import { clearCalendarCache } from "./calendar.js";
 import { clearInsightsCache } from "./insights.js";
 import { joinedStatus, meetingWindow, secondsInWindow } from "./meetingMath.js";
 import { emitAttendance } from "./meetingSync.js";
+import { halfWindowError, halfWindowUtc, leaveCoversAt } from "../lib/halfDay.js";
 
 /**
  * Leave granted by HR straight from the dashboard profile, for specific days.
@@ -45,11 +46,15 @@ export interface ManualLeaveInput {
   type: string;
   reason: string;
   approvedBy: string;
+  /** Half-day leave: the 3 h window ("HH:MM" IST) on the single date. */
+  half?: { start: string; end: string };
 }
 
 export class LeaveInputError extends Error {}
 
-function validate(input: ManualLeaveInput): { days: string[]; type: ManualLeaveType; reason: string; by: string } {
+function validate(input: ManualLeaveInput): {
+  days: string[]; type: ManualLeaveType; reason: string; by: string; half: { start: string; end: string } | null;
+} {
   const isDay = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d + "T00:00:00Z"));
   const raw = Array.isArray(input.dates) ? input.dates.map(String) : [];
   if (raw.length === 0) throw new LeaveInputError("Pick at least one date.");
@@ -67,7 +72,14 @@ function validate(input: ManualLeaveInput): { days: string[]; type: ManualLeaveT
   if (reason.length < 3 || reason.length > 500) throw new LeaveInputError("Reason must be 3–500 characters.");
   const by = String(input.approvedBy ?? "").trim();
   if (by.length < 2 || by.length > 60) throw new LeaveInputError("Enter the approving HR member's name.");
-  return { days, type, reason, by };
+  let half: { start: string; end: string } | null = null;
+  if (input.half) {
+    if (days.length !== 1) throw new LeaveInputError("A half day is a single date.");
+    const bad = halfWindowError(input.half.start, input.half.end);
+    if (bad) throw new LeaveInputError(bad);
+    half = { start: input.half.start, end: input.half.end };
+  }
+  return { days, type, reason, by, half };
 }
 
 /** Meeting rows for this member on these local days. */
@@ -136,16 +148,22 @@ export async function grantManualLeave(
   const member = await prisma.member.findUnique({ where: { id: userId }, select: { guildId: true } });
   if (!member || member.guildId !== guildId) throw new LeaveInputError("Member not found.");
 
+  // A half day spans just its window; a full grant spans whole days.
+  const window = v.half ? halfWindowUtc(v.days[0]!, v.half.start, v.half.end) : null;
+  const cover = {
+    startAt: window ? window.start : tzDayStartUtc(v.days[0]!),
+    endAt: window ? window.end : new Date(tzDayStartUtc(shiftDayKey(v.days[v.days.length - 1]!, 1)).getTime() - 1000),
+    approvedDays: v.days.join(","),
+    ...(v.half ? { halfDay: true, halfStart: v.half.start, halfEnd: v.half.end } : {}),
+  };
   const row = await prisma.leaveRequest.create({
     data: {
       ...(opts.uid ? { uid: opts.uid } : {}),
       guildId,
       userId,
       type: v.type,
-      startAt: tzDayStartUtc(v.days[0]!),
-      endAt: new Date(tzDayStartUtc(shiftDayKey(v.days[v.days.length - 1]!, 1)).getTime() - 1000),
+      ...cover,
       reason: v.reason,
-      approvedDays: v.days.join(","),
       status: "approved",
       reviewedById: `${DASHBOARD_REVIEWER}${v.by}`,
       reviewedAt: new Date(),
@@ -154,10 +172,12 @@ export async function grantManualLeave(
 
   // Meetings already held on those days: an absence (or an early leave) becomes
   // excused, as it would have if the leave had existed when the meeting started.
+  // A half day excuses only meetings that start inside its window.
   let excusedMeetings = 0;
   const changed = new Set<number>();
   for (const r of await meetingRowsOn(guildId, userId, v.days)) {
     if (r.status !== "absent" && r.status !== "left_early") continue;
+    if (!leaveCoversAt(cover, r.scheduledStart)) continue;
     await prisma.meetingAttendance.update({
       where: { id: r.id },
       data: { status: "excused", leaveStatus: "approved" },

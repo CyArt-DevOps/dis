@@ -5,6 +5,7 @@ import { prisma } from "../../core/db.js";
 import { logger } from "../../core/logger.js";
 import { EMS_APPROVER, LeaveInputError, grantManualLeave, leaveDays, leaveOrigin, revokeManualLeave } from "../../services/manualLeave.js";
 import { WarningError, revokeWarning, sendWarning } from "../../services/warnings.js";
+import { halfWindowError, halfWindowOf } from "../../lib/halfDay.js";
 
 /**
  * HR actions sync with EMS (spec 2026-11-03 §6, §7), behind the v1 Bearer guard. EMS holds the sync logic.
@@ -13,6 +14,7 @@ import { WarningError, revokeWarning, sendWarning } from "../../services/warning
  *   POST /warnings/:uid/withdraw            revoke; already withdrawn is success; a ladder mirror is 409
  *   GET  /leaves?updatedSince=&afterId=     every decided leave, same paging
  *   POST /leaves                            grant from EMS; a repeated uid changes nothing
+ *     (half day: halfDay true + halfStart/halfEnd "HH:MM" IST, one day, 3 h inside 11:30–19:00; list items carry the same)
  *   POST /leaves/:uid/revoke                revoke; already inactive is success; a Discord approval is 409 (DIS only)
  */
 export const warningsRouter = express.Router();
@@ -117,10 +119,16 @@ warningsRouter.post("/:uid/withdraw", json, async (req, res) => {
 const leaveDto = (l: {
   id: number; uid: string; userId: string; type: string; status: string; startAt: Date; endAt: Date; approvedDays: string | null;
   reason: string; reviewedById: string | null; reviewedAt: Date | null; updatedAt: Date;
-}) => ({
-  id: l.id, uid: l.uid, discordUserId: l.userId, type: l.type, status: l.status, days: leaveDays(l), reason: l.reason,
-  origin: leaveOrigin(l.reviewedById), reviewedById: l.reviewedById, reviewedAt: l.reviewedAt, updatedAt: l.updatedAt,
-});
+  halfDay?: boolean | null; halfStart?: string | null; halfEnd?: string | null;
+}) => {
+  const half = halfWindowOf(l);
+  return {
+    id: l.id, uid: l.uid, discordUserId: l.userId, type: l.type, status: l.status, days: leaveDays(l), reason: l.reason,
+    origin: leaveOrigin(l.reviewedById), reviewedById: l.reviewedById, reviewedAt: l.reviewedAt, updatedAt: l.updatedAt,
+    halfDay: half !== null,
+    ...(half ? { halfStart: half.start, halfEnd: half.end } : {}),
+  };
+};
 
 leavesRouter.get("/", async (req, res) => {
   const where = pageWhere(req.query);
@@ -140,6 +148,14 @@ const grantSchema = z.object({
   days: z.array(z.string()).min(1).max(31),
   reason: z.string().trim().min(3).max(500),
   by: name,
+  halfDay: z.boolean().optional(),
+  halfStart: z.string().optional(),
+  halfEnd: z.string().optional(),
+}).superRefine((b, ctx) => {
+  if (b.halfDay !== true) return;
+  if (b.days.length !== 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["days"], message: "a half day is a single date" });
+  const bad = halfWindowError(b.halfStart, b.halfEnd);
+  if (bad) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["halfStart"], message: bad });
 });
 
 leavesRouter.post("/", json, async (req, res) => {
@@ -152,7 +168,10 @@ leavesRouter.post("/", json, async (req, res) => {
     const out = await grantManualLeave(
       env.DISCORD_GUILD_ID,
       b.discordUserId,
-      { dates: b.days, type: b.type, reason: b.reason, approvedBy: `${EMS_APPROVER}${b.by}`.slice(0, 60) },
+      {
+        dates: b.days, type: b.type, reason: b.reason, approvedBy: `${EMS_APPROVER}${b.by}`.slice(0, 60),
+        ...(b.halfDay ? { half: { start: b.halfStart!, end: b.halfEnd! } } : {}),
+      },
       { uid: b.uid }
     );
     logger.info({ leave: out.id, by: b.by }, "Leave granted from EMS");

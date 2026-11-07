@@ -55,6 +55,20 @@ describe("dashboard leave and meeting attendance", () => {
     expect(rows.map((r) => r.status)).toEqual(["excused", "excused", "present"]);
     expect(emitAttendance.mock.calls.map((c) => c[0]).sort()).toEqual([5, 6]);
   });
+  it("HG-DIS-01 a half-day grant excuses only meetings inside its window", async () => {
+    const lunch = new Date("2026-10-27T08:00:00Z"); // 13:30 IST, inside 13:00–16:00
+    rows[1]!.scheduledStart = lunch;
+    const out = await grantManualLeave("g1", "u1", {
+      dates: ["2026-10-27"], type: "casual", reason: "appointment", approvedBy: "Asha", half: { start: "13:00", end: "16:00" },
+    });
+    expect(out.excusedMeetings).toBe(1);
+    expect(rows.map((r) => r.status)).toEqual(["absent", "excused", "present"]);
+  });
+  it("HG-DIS-01 a half-day grant refuses a range or a bad window", async () => {
+    const base = { type: "casual", reason: "appointment", approvedBy: "Asha" };
+    await expect(grantManualLeave("g1", "u1", { ...base, dates: ["2026-10-27", "2026-10-28"], half: { start: "13:00", end: "16:00" } })).rejects.toThrow(/single date/);
+    await expect(grantManualLeave("g1", "u1", { ...base, dates: ["2026-10-27"], half: { start: "17:00", end: "20:00" } })).rejects.toThrow(/19:00/);
+  });
   it("revoke puts back absent / left_early from the stored numbers and re-sends", async () => {
     rows[0]!.status = "excused";
     rows[1]!.status = "excused";

@@ -59,6 +59,11 @@ describe("v1Router", () => {
     expect(Date.parse(body.startedAt)).toBeLessThanOrEqual(Date.now());
     expect(Date.parse(body.startedAt)).toBeGreaterThan(Date.now() - 3600_000);
   });
+  it("/health tells EMS this build takes half-day leave (HG-API-14)", async () => {
+    const body = await (await fetch(`${base}/health`, { headers: auth })).json();
+    expect(body.features).toEqual(expect.objectContaining({ halfDayLeave: true }));
+    expect(body.botOnline).toBeDefined();
+  });
   it("401s without a key", async () => {
     expect((await fetch(`${base}/org`)).status).toBe(401);
   });

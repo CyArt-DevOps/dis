@@ -44,7 +44,7 @@ const revokeWarning = vi.fn(async (id: number) => { warns.find((w) => w.id === i
 class WarningError extends Error {}
 vi.mock("../src/services/warnings.js", () => ({ sendWarning, revokeWarning, WarningError }));
 const grantManualLeave = vi.fn(async (_g: string, userId: string, input: Row, opts: Row) => {
-  const row = { id: next++, guildId: "g1", uid: opts.uid, userId, type: input.type, status: "approved", approvedDays: input.dates.join(","), startAt: new Date(), endAt: new Date(), reason: input.reason, reviewedById: `dashboard:${input.approvedBy}`, reviewedAt: new Date(), updatedAt: new Date() };
+  const row = { id: next++, guildId: "g1", uid: opts.uid, userId, type: input.type, status: "approved", approvedDays: input.dates.join(","), startAt: new Date(), endAt: new Date(), reason: input.reason, reviewedById: `dashboard:${input.approvedBy}`, reviewedAt: new Date(), updatedAt: new Date(), halfDay: Boolean(input.half), halfStart: input.half?.start ?? null, halfEnd: input.half?.end ?? null };
   leaves.push(row);
   return { id: row.id, days: input.dates, excusedMeetings: 0 };
 });
@@ -171,6 +171,36 @@ describe("leaves", () => {
     expect((await ok.json()).status).toBe("revoked");
     expect((await post(`/l/${U1}/revoke`)).status).toBe(200);
     expect(revokeManualLeave).toHaveBeenCalledTimes(1);
+  });
+  it("HG-DIS-01 grants a half day from EMS with its window, and lists it back", async () => {
+    const res = await post("/l", { ...grantBody, halfDay: true, halfStart: "13:00", halfEnd: "16:00" });
+    expect(res.status).toBe(201);
+    expect(grantManualLeave).toHaveBeenCalledWith(G, MEMBER, expect.objectContaining({ dates: ["2026-11-20"], half: { start: "13:00", end: "16:00" } }), { uid: U1 });
+    expect(await res.json()).toMatchObject({ halfDay: true, halfStart: "13:00", halfEnd: "16:00" });
+    const rows = await (await get("/l")).json();
+    expect(rows[0]).toMatchObject({ uid: U1, halfDay: true, halfStart: "13:00", halfEnd: "16:00", days: ["2026-11-20"] });
+  });
+  it("HG-DIS-01 a full-day grant carries no window", async () => {
+    await post("/l", grantBody);
+    expect(grantManualLeave.mock.calls[0]![2]).not.toHaveProperty("half");
+    const rows = await (await get("/l")).json();
+    expect(rows[0].halfDay).toBe(false);
+    expect(rows[0]).not.toHaveProperty("halfStart");
+  });
+  it("HG-DIS-01 refuses a half day that is a range, outside 11:30–19:00 or not 3 h", async () => {
+    const half = { ...grantBody, halfDay: true, halfStart: "13:00", halfEnd: "16:00" };
+    for (const bad of [
+      { days: ["2026-11-20", "2026-11-21"] },
+      { halfStart: "11:00", halfEnd: "14:00" },
+      { halfStart: "16:30", halfEnd: "19:30" },
+      { halfStart: "13:00", halfEnd: "15:00" },
+      { halfStart: undefined, halfEnd: undefined },
+    ]) {
+      const res = await post("/l", { ...half, ...bad });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("invalid");
+    }
+    expect(grantManualLeave).not.toHaveBeenCalled();
   });
   it("HA-L9 refuses to revoke a Discord approval", async () => {
     leave({ reviewedById: "900000000000000090" });
