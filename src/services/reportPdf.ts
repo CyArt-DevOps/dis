@@ -741,9 +741,11 @@ export async function buildMemberReport(
         { label: "Reason", w: 175 },
       ],
       periodLeaves.map((l) => [
-        `${l.type[0]!.toUpperCase()}${l.type.slice(1)}`,
+        l.halfDay ? "Half-day leave" : `${l.type[0]!.toUpperCase()}${l.type.slice(1)}`,
         l.status,
-        l.approvedDays ? l.approvedDays.split(",").map((d) => fmtDay(d, { day: "2-digit", month: "short" })).join(", ") : `${fmtDate(l.startAt)} to ${fmtDate(l.endAt)}`,
+        l.halfDay && l.halfStart && l.halfEnd
+          ? `${fmtDate(l.startAt)}, ${l.halfStart}-${l.halfEnd}`
+          : l.approvedDays ? l.approvedDays.split(",").map((d) => fmtDay(d, { day: "2-digit", month: "short" })).join(", ") : `${fmtDate(l.startAt)} to ${fmtDate(l.endAt)}`,
         l.reason,
       ]),
       periodLeaves.map((l) => (l.status === "approved" ? C.green : l.status === "pending" ? C.partial : C.absent))

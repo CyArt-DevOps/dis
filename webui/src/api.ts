@@ -194,6 +194,10 @@ export interface Profile {
     approvedDays: string | null;
     reviewedById: string | null;
     reviewedAt: string | null;
+    /** Half-day leave: the 3 h window ("HH:MM" IST) on its one date. */
+    halfDay?: boolean;
+    halfStart?: string | null;
+    halfEnd?: string | null;
   }[];
   insights: MemberInsights | null;
 }

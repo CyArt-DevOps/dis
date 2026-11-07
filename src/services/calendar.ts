@@ -438,6 +438,10 @@ export interface MemberProfile {
     approvedDays: string | null;
     reviewedById: string | null;
     reviewedAt: Date | null;
+    /** Half-day leave: the 3 h window ("HH:MM" IST) on its one date. */
+    halfDay: boolean;
+    halfStart: string | null;
+    halfEnd: string | null;
   }[];
 }
 
@@ -483,6 +487,9 @@ export async function memberProfile(
         approvedDays: true,
         reviewedById: true,
         reviewedAt: true,
+        halfDay: true,
+        halfStart: true,
+        halfEnd: true,
       },
     }),
   ]);

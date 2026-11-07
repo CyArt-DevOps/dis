@@ -95,7 +95,8 @@ export function ProfilePage({
   const coveredDays = useMemo(() => {
     const out = new Set<string>();
     for (const l of data?.leaves ?? []) {
-      if (l.status !== "approved") continue;
+      // A half day is not a day off: the day stays open for a full-day grant.
+      if (l.status !== "approved" || l.halfDay) continue;
       if (l.approvedDays) {
         for (const d of l.approvedDays.split(",")) if (d) out.add(d);
         continue;
@@ -443,12 +444,15 @@ export function ProfilePage({
           {data.leaves.map((l) => {
             const viaDashboard = l.reviewedById?.startsWith("dashboard:");
             const days = l.approvedDays ? l.approvedDays.split(",").filter(Boolean) : null;
+            const half = l.halfDay && l.halfStart && l.halfEnd ? `${l.halfStart}–${l.halfEnd}` : null;
             return (
               <Row
                 key={l.id}
-                title={`#${l.id} · ${l.type} leave`}
+                title={half ? `#${l.id} · Half-day leave ${half}` : `#${l.id} · ${l.type} leave`}
                 sub={
-                  days
+                  half
+                    ? `${days?.[0] ? dayLabel(days[0], { day: "numeric", month: "short" }) : dateOf(l.startAt)} · ${half} IST`
+                    : days
                     ? days.length <= 4
                       ? days.map((d) => dayLabel(d, { day: "numeric", month: "short" })).join(", ")
                       : `${days.length} days · ${dayLabel(days[0]!, { day: "numeric", month: "short" })} → ${dayLabel(days[days.length - 1]!, { day: "numeric", month: "short" })}`
