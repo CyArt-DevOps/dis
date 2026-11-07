@@ -2,6 +2,12 @@ import { prisma } from "../core/db.js";
 import { org, activeProjects } from "../config/loader.js";
 import { shiftDayKey, splitByTzDay, tzDateKey, tzDayStartUtc } from "../lib/time.js";
 import { holidayMap } from "./holidays.js";
+import { halfDayRules, halfWindowOf } from "../lib/halfDay.js";
+/** The hours target and join cutoff that apply to this calendar day. */
+export function dayTargets(d) {
+    const p = org.attendancePolicy;
+    return { requiredSeconds: d.requiredSeconds ?? Math.round(p.minHours * 3600), loginBy: d.loginBy ?? p.loginBy };
+}
 function policy() {
     return org.attendancePolicy;
 }
@@ -97,7 +103,7 @@ export async function buildCalendars(guildId, scope, from, to) {
                 startAt: { lt: rangeEnd },
                 endAt: { gt: rangeStart },
             },
-            select: { userId: true, startAt: true, endAt: true, approvedDays: true },
+            select: { userId: true, startAt: true, endAt: true, approvedDays: true, halfDay: true, halfStart: true, halfEnd: true },
         }),
         // Earliest day each member has ANY recorded attendance. Used as a floor on
         // their tracked-from date so a late-created Member row (a resync, say)
@@ -136,7 +142,15 @@ export async function buildCalendars(guildId, scope, from, to) {
         }
     }
     const onLeave = new Set();
+    // Half-day leave: the member works that day; only the window is skipped.
+    const halfOn = new Map();
     for (const l of leaves) {
+        const half = halfWindowOf(l);
+        if (half) {
+            const d = (l.approvedDays ?? "").split(",").filter(Boolean)[0] ?? tzDateKey(l.startAt);
+            halfOn.set(key(l.userId, d), half);
+            continue;
+        }
         if (l.approvedDays) {
             // Exam leave: only the specific days HR approved from the timetable.
             for (const d of l.approvedDays.split(",").filter(Boolean))
@@ -170,7 +184,11 @@ export async function buildCalendars(guildId, scope, from, to) {
             const k = key(m.id, day);
             const seconds = secondsBy.get(k) ?? 0;
             const firstJoinAt = firstJoinBy.get(k) ?? null;
-            const onTime = firstJoinAt !== null && firstJoinAt <= cutoffs.get(day);
+            const half = onLeave.has(k) ? undefined : halfOn.get(k);
+            const rules = half ? halfDayRules(p, half) : null;
+            const cutoff = rules ? localTimeOn(day, rules.loginBy) : cutoffs.get(day);
+            const required = rules ? rules.requiredSeconds : requiredSeconds;
+            const onTime = firstJoinAt !== null && firstJoinAt <= cutoff;
             let status;
             if (day > today)
                 status = "future";
@@ -186,7 +204,7 @@ export async function buildCalendars(guildId, scope, from, to) {
                 status = "off";
             else if (firstJoinAt === null)
                 status = "missing";
-            else if (onTime && seconds >= requiredSeconds)
+            else if (onTime && seconds >= required)
                 status = "good";
             else
                 status = "partial";
@@ -198,7 +216,9 @@ export async function buildCalendars(guildId, scope, from, to) {
                 totals.missing++;
             else if (status === "leave")
                 totals.leave++;
-            return { day, status, seconds, firstJoinAt, onTime };
+            return rules
+                ? { day, status, seconds, firstJoinAt, onTime, halfDay: half, requiredSeconds: rules.requiredSeconds, loginBy: rules.loginBy }
+                : { day, status, seconds, firstJoinAt, onTime };
         });
         return {
             userId: m.id,
@@ -353,6 +373,9 @@ export async function memberProfile(guildId, userId, from, to) {
                 approvedDays: true,
                 reviewedById: true,
                 reviewedAt: true,
+                halfDay: true,
+                halfStart: true,
+                halfEnd: true,
             },
         }),
     ]);

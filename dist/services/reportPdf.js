@@ -70,6 +70,11 @@ function hm(seconds) {
 function fmtDay(day, opts = { day: "2-digit", month: "short", year: "numeric" }) {
     return new Date(day + "T00:00:00Z").toLocaleDateString("en-GB", { ...opts, timeZone: "UTC" });
 }
+/** "HH:MM" → minutes after midnight. */
+function hhmmToMin(hhmm) {
+    const [h, m] = hhmm.split(":").map(Number);
+    return (h ?? 0) * 60 + (m ?? 0);
+}
 function fmtDate(d) {
     if (!d)
         return "-";
@@ -122,7 +127,7 @@ export async function buildMemberReport(guildId, userId, period, preparedBy) {
     const presentDays = settled.filter((d) => d.firstJoinAt).length;
     const voice = settled.reduce((a, d) => a + d.seconds, 0);
     const lateDays = settled.filter((d) => (d.status === "partial" || d.status === "good") && d.firstJoinAt && !d.onTime).length;
-    const shortDays = settled.filter((d) => d.status === "partial" && d.seconds < required).length;
+    const shortDays = settled.filter((d) => d.status === "partial" && d.seconds < (d.requiredSeconds ?? required)).length;
     const periodHolidays = holidays.filter((h) => h.day >= period.from && h.day <= to);
     const periodLeaves = profile.leaves.filter((l) => tzDateKey(l.startAt) <= to && tzDateKey(l.endAt) >= period.from);
     const periodMeetings = profile.meetings.filter((mt) => {
@@ -171,6 +176,7 @@ export async function buildMemberReport(guildId, userId, period, preparedBy) {
             seconds: d.seconds,
             firstJoinMin: d.firstJoinAt ? Math.round((d.firstJoinAt.getTime() - tzDayStartUtc(d.day).getTime()) / 60_000) : null,
             onTime: d.onTime,
+            ...(d.halfDay ? { requiredSeconds: d.requiredSeconds, loginByMin: d.loginBy ? hhmmToMin(d.loginBy) : undefined } : {}),
         })),
         requiredSeconds: required,
         loginByMin,
@@ -703,9 +709,11 @@ export async function buildMemberReport(guildId, userId, period, preparedBy) {
             { label: "Dates", w: 150 },
             { label: "Reason", w: 175 },
         ], periodLeaves.map((l) => [
-            `${l.type[0].toUpperCase()}${l.type.slice(1)}`,
+            l.halfDay ? "Half-day leave" : `${l.type[0].toUpperCase()}${l.type.slice(1)}`,
             l.status,
-            l.approvedDays ? l.approvedDays.split(",").map((d) => fmtDay(d, { day: "2-digit", month: "short" })).join(", ") : `${fmtDate(l.startAt)} to ${fmtDate(l.endAt)}`,
+            l.halfDay && l.halfStart && l.halfEnd
+                ? `${fmtDate(l.startAt)}, ${l.halfStart}-${l.halfEnd}`
+                : l.approvedDays ? l.approvedDays.split(",").map((d) => fmtDay(d, { day: "2-digit", month: "short" })).join(", ") : `${fmtDate(l.startAt)} to ${fmtDate(l.endAt)}`,
             l.reason,
         ]), periodLeaves.map((l) => (l.status === "approved" ? C.green : l.status === "pending" ? C.partial : C.absent)));
     }

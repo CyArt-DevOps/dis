@@ -3,10 +3,19 @@ import { isStaff } from "../lib/rbac.js";
 import { parseDateTime, formatInTz } from "../lib/time.js";
 import { prisma } from "../core/db.js";
 import { finalizeDecision } from "../interactions/leave.js";
-import { createLeaveRequest, listLeaves, pendingLeaves, validateLeave, LEAVE_TYPE_CHOICES, LEAVE_TYPES, } from "../services/leave.js";
+import { HALF_DAY_STARTS, halfDayEnd } from "../lib/halfDay.js";
+import { checkHalfDayRequest, createLeaveRequest, leaveSpan, leaveTitle, listLeaves, pendingLeaves, validateLeave, LEAVE_TYPE_CHOICES, LEAVE_TYPES, } from "../services/leave.js";
 // Direct staff grant covers a whole date range, so exam leave (which needs the
-// timetable + per-day picker) is handled only through the request/approve flow.
-const DIRECT_APPROVE_TYPES = LEAVE_TYPE_CHOICES.filter((c) => c.value !== "exam");
+// timetable + per-day picker) and half days (a window) go through the request/approve flow.
+const DIRECT_APPROVE_TYPES = LEAVE_TYPE_CHOICES.filter((c) => c.value !== "exam" && c.value !== "half_day");
+// Half-day starts; each choice shows its end so the window is visible before submitting.
+const HALF_START_CHOICES = HALF_DAY_STARTS.map((s) => ({ name: `${s} – ${halfDayEnd(s)} (half day)`, value: s }));
+/** "13:00–16:00 on 10 Jul 2026" for a half day, else "from → to". */
+function spanOf(r) {
+    return r.halfDay && r.halfStart && r.halfEnd
+        ? leaveSpan(r.startAt, r.endAt, { start: r.halfStart, end: r.halfEnd })
+        : `${formatInTz(r.startAt)} → ${formatInTz(r.endAt)}`;
+}
 export const leave = {
     data: new SlashCommandBuilder()
         .setName("leave")
@@ -18,7 +27,11 @@ export const leave = {
         .addStringOption((o) => o.setName("type").setDescription("Leave type").setRequired(true).addChoices(...LEAVE_TYPE_CHOICES))
         .addStringOption((o) => o.setName("start_date").setDescription("DD/MM/YYYY").setRequired(true))
         .addStringOption((o) => o.setName("end_date").setDescription("DD/MM/YYYY").setRequired(true))
-        .addStringOption((o) => o.setName("reason").setDescription("Reason").setRequired(true)))
+        .addStringOption((o) => o.setName("reason").setDescription("Reason").setRequired(true))
+        .addStringOption((o) => o
+        .setName("start_time")
+        .setDescription("Half day only: start of your 3-hour window (IST)")
+        .addChoices(...HALF_START_CHOICES)))
         .addSubcommand((sc) => sc.setName("list").setDescription("Your leave requests"))
         .addSubcommand((sc) => sc.setName("pending").setDescription("Pending leave requests (staff)"))
         .addSubcommand((sc) => sc
@@ -37,6 +50,22 @@ export const leave = {
         const sub = interaction.options.getSubcommand();
         if (sub === "request") {
             const type = interaction.options.getString("type", true);
+            if (type === "half_day") {
+                const half = checkHalfDayRequest(interaction.options.getString("start_date", true), interaction.options.getString("end_date", true), interaction.options.getString("start_time"));
+                if (!half.ok) {
+                    await interaction.reply({ content: `❌ ${half.reason}`, flags: MessageFlags.Ephemeral });
+                    return;
+                }
+                const member = await interaction.guild.members.fetch(interaction.user.id);
+                const reason = interaction.options.getString("reason", true);
+                const { id, channelId } = await createLeaveRequest(member, type, half.startAt, half.endAt, reason, half.half);
+                const where = channelId ? `A private channel with HR has been created: <#${channelId}>.` : "HR will review it.";
+                await interaction.reply({
+                    content: `${leaveTitle({ type, halfDay: true, halfStart: half.half.start, halfEnd: half.half.end })} request **#${id}** submitted for ${leaveSpan(half.startAt, half.endAt, half.half)}. ${where}`,
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
             const startAt = parseDateTime(interaction.options.getString("start_date", true), "12:00 AM");
             const endAt = parseDateTime(interaction.options.getString("end_date", true), "11:59 PM");
             const reason = interaction.options.getString("reason", true);
@@ -73,10 +102,9 @@ export const leave = {
             }
             const embed = new EmbedBuilder().setTitle("Your leave requests").setColor(0x5865f2);
             for (const r of rows) {
-                const label = LEAVE_TYPES[r.type]?.label ?? r.type;
                 embed.addFields({
-                    name: `#${r.id} · ${label} · ${r.status}`,
-                    value: `${formatInTz(r.startAt)} → ${formatInTz(r.endAt)}\n${r.reason}`,
+                    name: `#${r.id} · ${leaveTitle(r)} · ${r.status}`,
+                    value: `${spanOf(r)}\n${r.reason}`,
                 });
             }
             await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -95,10 +123,9 @@ export const leave = {
             }
             const embed = new EmbedBuilder().setTitle("Pending leave").setColor(0xfaa61a);
             for (const r of rows) {
-                const label = LEAVE_TYPES[r.type]?.label ?? r.type;
                 embed.addFields({
-                    name: `#${r.id} · ${label} · <@${r.userId}>`,
-                    value: `${formatInTz(r.startAt)} → ${formatInTz(r.endAt)}\n${r.reason}${r.documentUrl ? `\n[document](${r.documentUrl})` : ""}`,
+                    name: `#${r.id} · ${leaveTitle(r)} · <@${r.userId}>`,
+                    value: `${spanOf(r)}\n${r.reason}${r.documentUrl ? `\n[document](${r.documentUrl})` : ""}`,
                 });
             }
             await interaction.reply({

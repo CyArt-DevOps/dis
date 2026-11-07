@@ -1,5 +1,5 @@
 import { EmbedBuilder, MessageFlags } from "discord.js";
-import { LEAVE_IDS, LEAVE_TYPES, createLeaveRequest, decideLeave, examApprovalModal, leaveApprovalsChannel, leaveModal, leaveTypeSelect, parseExamDates, validateLeave, } from "../services/leave.js";
+import { LEAVE_IDS, LEAVE_TYPES, checkHalfDayRequest, createLeaveRequest, decideLeave, examApprovalModal, halfStartFromId, halfStartSelect, leaveSpan, leaveTitle, leaveApprovalsChannel, leaveModal, leaveTypeSelect, parseExamDates, validateLeave, } from "../services/leave.js";
 import { prisma } from "../core/db.js";
 import { findProject, org } from "../config/loader.js";
 import { roleNames } from "../lib/names.js";
@@ -7,7 +7,7 @@ import { deriveMembership } from "../lib/membership.js";
 import { ChannelType } from "discord.js";
 import { isStaff } from "../lib/rbac.js";
 import { logEmbed, postLog } from "../lib/log.js";
-import { formatDuration, formatInTz, parseDateTime } from "../lib/time.js";
+import { formatInTz, parseDateTime } from "../lib/time.js";
 import { logger } from "../core/logger.js";
 import { dmPaused, notifyMember } from "../services/notify.js";
 function cid(i) {
@@ -20,7 +20,7 @@ function cid(i) {
  * can arrange handovers. DMs each Team Lead if possible; posts a fallback in the
  * project's Team Lead chat channel too.
  */
-async function notifyProjectTeamLead(guild, internUserId, approvedDays, startAt, endAt, typeLabel) {
+async function notifyProjectTeamLead(guild, internUserId, approvedDays, startAt, endAt, typeLabel, half = null) {
     // Route by the intern's CURRENT Discord roles — the authoritative source when
     // a Manager changes someone's project by editing roles (the stored DB profile
     // can be stale, e.g. a wrong project picked at onboarding then corrected).
@@ -39,9 +39,11 @@ async function notifyProjectTeamLead(guild, internUserId, approvedDays, startAt,
     if (!tlRole)
         return;
     const internMention = `<@${internUserId}>`;
-    const daysStr = approvedDays && approvedDays.length
-        ? `**Approved days:** ${approvedDays.join(", ")}`
-        : `**From** ${formatInTz(startAt)}\n**To** ${formatInTz(endAt)}`;
+    const daysStr = half
+        ? `**${leaveSpan(startAt, endAt, half)}** (IST). Only this window is off; the rest of the day is a normal working day.`
+        : approvedDays && approvedDays.length
+            ? `**Approved days:** ${approvedDays.join(", ")}`
+            : `**From** ${formatInTz(startAt)}\n**To** ${formatInTz(endAt)}`;
     const embed = new EmbedBuilder()
         .setTitle(`Team member on leave: ${typeLabel}`)
         .setColor(0x5865f2)
@@ -97,15 +99,15 @@ export async function finalizeDecision(i, staff, id, approve, approvedDays) {
     // Decision record for HR in #leave-approvals. The private ticket is deleted
     // moments from now, so this line has to stand on its own: who, what, by whom,
     // for how long, and when it was decided.
+    const typeLabel = leaveTitle({ type: result.type, halfDay: Boolean(result.half), halfStart: result.half?.start, halfEnd: result.half?.end });
     const approvals = leaveApprovalsChannel(staff.guild);
     if (approvals) {
-        const typeLabel = LEAVE_TYPES[result.type]?.label ?? result.type;
         const requester = staff.guild.members.cache.get(result.userId)?.displayName ??
             (await staff.guild.members.fetch(result.userId).catch(() => null))?.displayName ??
             `Member ${result.userId}`;
         const span = approvedDays && approvedDays.length
             ? `${approvedDays.length} exam day(s): ${approvedDays.join(", ")}`
-            : formatDuration(result.startAt, result.endAt);
+            : leaveSpan(result.startAt, result.endAt, result.half);
         const verb = approve ? "Approved" : "Rejected";
         const preposition = approve ? "to" : "for";
         await approvals
@@ -145,13 +147,20 @@ export async function finalizeDecision(i, staff, id, approve, approvedDays) {
     // Personal DM to the requester.
     const user = await staff.client.users.fetch(result.userId).catch(() => null);
     if (user) {
-        const label = LEAVE_TYPES[result.type]?.label ?? result.type;
         const dm = new EmbedBuilder()
             .setTitle(`Leave Request #${id} — ${result.status.toUpperCase()}`)
-            .setColor(approve ? 0x57f287 : 0xed4245)
-            .addFields({ name: "Type", value: label, inline: true }, { name: "From", value: formatInTz(result.startAt), inline: true }, { name: "To", value: formatInTz(result.endAt), inline: true }, { name: "Decided by", value: `${staff.displayName}` });
+            .setColor(approve ? 0x57f287 : 0xed4245);
+        if (result.half) {
+            dm.addFields({ name: "Type", value: typeLabel, inline: true }, { name: "Date", value: leaveSpan(result.startAt, result.endAt, result.half), inline: true }, { name: "Decided by", value: `${staff.displayName}` });
+        }
+        else {
+            dm.addFields({ name: "Type", value: typeLabel, inline: true }, { name: "From", value: formatInTz(result.startAt), inline: true }, { name: "To", value: formatInTz(result.endAt), inline: true }, { name: "Decided by", value: `${staff.displayName}` });
+        }
         if (approve) {
-            if (approvedDays && approvedDays.length) {
+            if (result.half) {
+                dm.setDescription(`Your half-day leave has been approved. You are excused only from ${result.half.start} to ${result.half.end}; the rest of the day is a normal working day.`);
+            }
+            else if (approvedDays && approvedDays.length) {
                 dm.addFields({ name: "Approved exam days", value: approvedDays.join(", ") });
                 dm.setDescription("Your exam leave has been approved. You are automatically excused from meeting attendance on the approved exam days only.");
             }
@@ -170,7 +179,7 @@ export async function finalizeDecision(i, staff, id, approve, approvedDays) {
     // On approval, notify the intern's project Team Lead so they can arrange
     // handovers for any deadlines on the covered days.
     if (approve) {
-        await notifyProjectTeamLead(staff.guild, result.userId, approvedDays, result.startAt, result.endAt, LEAVE_TYPES[result.type]?.label ?? result.type).catch((err) => logger.warn({ err, leave: id }, "Team Lead handover notification failed"));
+        await notifyProjectTeamLead(staff.guild, result.userId, approvedDays, result.startAt, result.endAt, typeLabel, result.half).catch((err) => logger.warn({ err, leave: id }, "Team Lead handover notification failed"));
     }
 }
 export const leaveApproveHandler = {
@@ -279,7 +288,24 @@ export const leaveTypeHandler = {
             await i.reply({ content: "Unknown leave type.", flags: MessageFlags.Ephemeral });
             return;
         }
+        // Half day: pick the window first (each option shows its end), then the date in the modal.
+        if (type === "half_day") {
+            await i.update({
+                content: "Half day: pick when your 3-hour window starts (IST). The end time is shown next to each start.",
+                components: [halfStartSelect()],
+            });
+            return;
+        }
         await i.showModal(leaveModal(type));
+    },
+};
+export const leaveHalfStartHandler = {
+    id: "leave:halfstart",
+    matches: (i) => i.isStringSelectMenu() && cid(i) === LEAVE_IDS.halfStart,
+    async handle(i) {
+        if (!i.isStringSelectMenu())
+            return;
+        await i.showModal(leaveModal("half_day", i.values[0]));
     },
 };
 export const leaveModalHandler = {
@@ -291,7 +317,23 @@ export const leaveModalHandler = {
     async handle(i) {
         if (!i.isModalSubmit() || !i.inCachedGuild())
             return;
-        const type = cid(i).split(":")[2];
+        const parts = cid(i).split(":");
+        const type = parts[2];
+        if (type === "half_day") {
+            const half = checkHalfDayRequest(i.fields.getTextInputValue("start_date"), null, halfStartFromId(parts[3]));
+            if (!half.ok) {
+                await i.editReply({ content: `❌ ${half.reason}` });
+                return;
+            }
+            const member = await i.guild.members.fetch(i.user.id);
+            const reason = i.fields.getTextInputValue("reason");
+            const { id, channelId } = await createLeaveRequest(member, type, half.startAt, half.endAt, reason, half.half);
+            const where = channelId ? `A private channel with HR has been created: <#${channelId}>.` : "HR will review it.";
+            await i.editReply({
+                content: `${leaveTitle({ type, halfDay: true, halfStart: half.half.start, halfEnd: half.half.end })} request **#${id}** submitted for ${leaveSpan(half.startAt, half.endAt, half.half)}. ${where}`,
+            });
+            return;
+        }
         const startAt = parseDateTime(i.fields.getTextInputValue("start_date"), "12:00 AM");
         const endAt = parseDateTime(i.fields.getTextInputValue("end_date"), "11:59 PM");
         const reason = i.fields.getTextInputValue("reason");
@@ -322,6 +364,7 @@ export const leaveHandlers = [
     leaveExamApproveHandler,
     leaveStartHandler,
     leaveTypeHandler,
+    leaveHalfStartHandler,
     leaveModalHandler,
 ];
 //# sourceMappingURL=leave.js.map

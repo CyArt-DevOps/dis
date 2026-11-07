@@ -2,14 +2,16 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder
 import { prisma } from "../core/db.js";
 import { org } from "../config/loader.js";
 import { logger } from "../core/logger.js";
-import { formatDuration, formatInTz, inclusiveDaySpan, tzDateKey } from "../lib/time.js";
+import { formatDateInTz, formatDuration, formatInTz, inclusiveDaySpan } from "../lib/time.js";
 import { ticketsCategoryWithRoom } from "./ticketCategory.js";
+import { HALF_DAY_STARTS, halfDayEnd, halfDayLabel, halfWindowError, halfWindowUtc, leaveCoversAt, leaveLabel } from "../lib/halfDay.js";
 export const LEAVE_IDS = {
     approve: "leave:approve", // leave:approve:<id>
     reject: "leave:reject", // leave:reject:<id>
     start: "leave:start", // panel button
     typeSelect: "leave:type", // type select menu
-    modal: "leave:modal", // leave:modal:<type>
+    modal: "leave:modal", // leave:modal:<type>  (half day: leave:modal:half_day:<HHMM>)
+    halfStart: "leave:halfstart", // half-day start time select
     examApproveModal: "leave:approve:exam", // leave:approve:exam:<id> — HR picks exam days
 };
 export const LEAVE_TYPES = {
@@ -18,6 +20,8 @@ export const LEAVE_TYPES = {
     // Exam leave: span the exam PERIOD (max 30 days); HR picks the actual exam days
     // from the uploaded timetable when approving — only those days get excused.
     exam: { key: "exam", label: "University Examination Leave", maxDays: 30, priorDays: 3, doc: "always", docLabel: "exam timetable" },
+    // Half day (EMS spec 2026-11-07 §7): one date, a 3 h window inside 11:30–19:00 IST. Not a day off: only the window is excused.
+    half_day: { key: "half_day", label: "Half day", maxDays: 1, priorDays: 0, doc: "never", docLabel: "" },
 };
 export const LEAVE_TYPE_CHOICES = Object.values(LEAVE_TYPES).map((t) => ({
     name: t.label,
@@ -30,7 +34,8 @@ export function leavePanelEmbed() {
         .setDescription("Click **Request Leave** to submit a request. HR will review it. If approved, you are automatically excused from meeting attendance for the covered days.\n\n" +
         "**Casual Leave**: up to 1 day. Request at least 1 day in advance.\n" +
         "**Sick Leave**: 1 day without a document. Longer periods require a medical certificate.\n" +
-        "**University Examination Leave**: enter your exam period, request 3 days ahead, and upload your timetable. HR approves the specific exam days from the timetable.\n\n" +
+        "**University Examination Leave**: enter your exam period, request 3 days ahead, and upload your timetable. HR approves the specific exam days from the timetable.\n" +
+        "**Half day**: one date and a 3-hour window starting between 11:30 and 16:00. The rest of the day is a normal working day.\n\n" +
         "A private channel with HR is created for your request. If a document is required, upload it there.");
 }
 export function leavePanelButton() {
@@ -47,8 +52,31 @@ export function leaveTypeSelect() {
         .addOptions(Object.values(LEAVE_TYPES).map((t) => new StringSelectMenuOptionBuilder().setLabel(t.label).setValue(t.key)));
     return new ActionRowBuilder().addComponents(menu);
 }
-export function leaveModal(type) {
+/** Half-day start picker: every option shows its end time, so the intern sees the window before submitting. */
+export function halfStartSelect() {
+    const menu = new StringSelectMenuBuilder()
+        .setCustomId(LEAVE_IDS.halfStart)
+        .setPlaceholder("Pick the start of your 3-hour window")
+        .addOptions(HALF_DAY_STARTS.map((start) => new StringSelectMenuOptionBuilder().setLabel(`${start} – ${halfDayEnd(start)}`).setValue(start)));
+    return new ActionRowBuilder().addComponents(menu);
+}
+/** "13:00" ⇄ "1300" for custom ids (":" separates the id's parts). */
+export const halfStartToId = (start) => start.replace(":", "");
+export const halfStartFromId = (raw) => (raw && /^\d{4}$/.test(raw) ? `${raw.slice(0, 2)}:${raw.slice(2)}` : null);
+/** Ticket / list title: "Half-day leave 13:00–16:00", else the type's label. */
+export function leaveTitle(row) {
+    return leaveLabel(row, LEAVE_TYPES[row.type]?.label ?? row.type);
+}
+export function leaveModal(type, halfStart) {
     const def = LEAVE_TYPES[type];
+    if (type === "half_day") {
+        const start = halfStart && HALF_DAY_STARTS.includes(halfStart) ? halfStart : HALF_DAY_STARTS[0];
+        const input = (id, label, ph, style) => new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId(id).setLabel(label).setPlaceholder(ph).setStyle(style).setRequired(true));
+        return new ModalBuilder()
+            .setCustomId(`${LEAVE_IDS.modal}:half_day:${halfStartToId(start)}`)
+            .setTitle(halfDayLabel(start, halfDayEnd(start)))
+            .addComponents(input("start_date", "Date (DD/MM/YYYY), a single day", "e.g. 10/07/2026", TextInputStyle.Short), input("reason", "Reason", "Briefly describe your reason", TextInputStyle.Paragraph));
+    }
     const field = (id, label, ph) => new ActionRowBuilder().addComponents(new TextInputBuilder()
         .setCustomId(id)
         .setLabel(label)
@@ -143,6 +171,35 @@ export function validateLeave(type, startAt, endAt, now = new Date()) {
     }
     return { ok: true };
 }
+/**
+ * Half day raised in Discord: one date and a 3 h window inside 11:30–19:00.
+ * `endDate` (when given) must be the same date. Returns the stored instants.
+ */
+export function checkHalfDayRequest(startDate, endDate, start, now = new Date()) {
+    const day = parseExamDates(startDate.trim());
+    if (!day || day.length !== 1)
+        return { ok: false, reason: "Invalid date. Use `DD/MM/YYYY` for a single day." };
+    if (endDate !== null && endDate.trim() !== "" && endDate.trim() !== startDate.trim()) {
+        const other = parseExamDates(endDate.trim());
+        if (!other || other.length !== 1 || other[0] !== day[0]) {
+            return { ok: false, reason: "A half day covers a single date. Use the same start and end date, or request full-day leave for a range." };
+        }
+    }
+    if (!start)
+        return { ok: false, reason: "Pick a start time for your half day (11:30 to 16:00)." };
+    const end = halfDayEnd(start);
+    const bad = halfWindowError(start, end);
+    if (bad || !end) {
+        return { ok: false, reason: `${bad ?? "Invalid start time."} Pick a start between 11:30 and 16:00; the window is 3 hours and ends by 19:00.` };
+    }
+    const { start: startAt, end: endAt } = halfWindowUtc(day[0], start, end);
+    const check = validateLeave("half_day", startAt, endAt, now);
+    if (!check.ok)
+        return check;
+    if (endAt.getTime() <= now.getTime())
+        return { ok: false, reason: "That half-day window has already passed." };
+    return { ok: true, startAt, endAt, half: { start, end } };
+}
 /** What document (if any) HR should request in the ticket for this leave. */
 export function requiredDocument(type, startAt, endAt) {
     const def = LEAVE_TYPES[type];
@@ -174,7 +231,7 @@ function staffRoleIds(guild) {
  * the TICKETS category. The document (if required) is uploaded there — never in
  * a public channel. Returns the request id and channel id.
  */
-export async function createLeaveRequest(member, type, startAt, endAt, reason) {
+export async function createLeaveRequest(member, type, startAt, endAt, reason, half) {
     const row = await prisma.leaveRequest.create({
         data: {
             guildId: member.guild.id,
@@ -184,9 +241,10 @@ export async function createLeaveRequest(member, type, startAt, endAt, reason) {
             endAt,
             reason,
             status: "pending",
+            ...(half ? { halfDay: true, halfStart: half.start, halfEnd: half.end } : {}),
         },
     });
-    const def = LEAVE_TYPES[type];
+    const title = leaveTitle({ type, halfDay: Boolean(half), halfStart: half?.start, halfEnd: half?.end });
     const V = PermissionFlagsBits.ViewChannel;
     const S = PermissionFlagsBits.SendMessages;
     const A = PermissionFlagsBits.AttachFiles;
@@ -206,16 +264,11 @@ export async function createLeaveRequest(member, type, startAt, endAt, reason) {
             type: ChannelType.GuildText,
             parent: ticketsCat?.id,
             permissionOverwrites: overwrites,
-            topic: `Leave #${row.id} · ${def.label} · ${member.id}`,
+            topic: `Leave #${row.id} · ${title} · ${member.id}`,
         });
         channelId = channel.id;
         await prisma.leaveRequest.update({ where: { id: row.id }, data: { channelId } });
-        const embed = new EmbedBuilder()
-            .setTitle(`Leave Request #${row.id} · ${def.label}`)
-            .setColor(0xfaa61a)
-            .addFields({ name: "Member", value: `<@${member.id}>`, inline: true }, { name: "From", value: formatInTz(startAt), inline: true }, { name: "To", value: formatInTz(endAt), inline: true }, { name: "Reason", value: reason })
-            .setFooter({ text: "HR: approve or reject below" })
-            .setTimestamp(new Date());
+        const embed = leaveTicketEmbed(row.id, member.id, title, startAt, endAt, reason, half);
         const buttons = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`${LEAVE_IDS.approve}:${row.id}`).setLabel("Approve").setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`${LEAVE_IDS.reject}:${row.id}`).setLabel("Reject").setStyle(ButtonStyle.Danger));
         const doc = requiredDocument(type, startAt, endAt);
         const hrMention = staffRoleIds(member.guild)
@@ -231,7 +284,7 @@ export async function createLeaveRequest(member, type, startAt, endAt, reason) {
         const approvals = leaveApprovalsChannel(member.guild);
         if (approvals) {
             await approvals
-                .send(`New ${def.label} Request **#${row.id}** from ${member.displayName} for ${formatDuration(startAt, endAt)}`)
+                .send(`New ${title} Request **#${row.id}** from ${member.displayName} for ${leaveSpan(startAt, endAt, half)}`)
                 .catch(() => { });
         }
     }
@@ -239,6 +292,27 @@ export async function createLeaveRequest(member, type, startAt, endAt, reason) {
         logger.warn({ err, leave: row.id }, "Could not create leave channel");
     }
     return { id: row.id, channelId };
+}
+/** "10 Jul 2026, 13:00–16:00" for a half day, else the usual "(n days)" span. */
+export function leaveSpan(startAt, endAt, half) {
+    if (!half)
+        return formatDuration(startAt, endAt);
+    return `${formatDateInTz(startAt)}, ${half.start}–${half.end}`;
+}
+/** The private HR leave ticket's card. A half day reads "Half-day leave 13:00–16:00" with the date and window. */
+export function leaveTicketEmbed(id, userId, title, startAt, endAt, reason, half) {
+    const embed = new EmbedBuilder()
+        .setTitle(half ? `${title} · Request #${id}` : `Leave Request #${id} · ${title}`)
+        .setColor(0xfaa61a);
+    if (half) {
+        embed
+            .addFields({ name: "Member", value: `<@${userId}>`, inline: true }, { name: "Date", value: formatDateInTz(startAt), inline: true }, { name: "Window (IST)", value: `${half.start}–${half.end}`, inline: true }, { name: "Reason", value: reason })
+            .setDescription("Half day: only this window is excused. The rest of the day is a normal working day.");
+    }
+    else {
+        embed.addFields({ name: "Member", value: `<@${userId}>`, inline: true }, { name: "From", value: formatInTz(startAt), inline: true }, { name: "To", value: formatInTz(endAt), inline: true }, { name: "Reason", value: reason });
+    }
+    return embed.setFooter({ text: "HR: approve or reject below" }).setTimestamp(new Date());
 }
 export async function decideLeave(id, approve, reviewerId, approvedDays) {
     const row = await prisma.leaveRequest.findUnique({ where: { id } });
@@ -263,25 +337,22 @@ export async function decideLeave(id, approve, reviewerId, approvedDays) {
         endAt: row.endAt,
         channelId: row.channelId,
         approvedDays: stored ? stored.split(",") : null,
+        half: row.halfDay && row.halfStart && row.halfEnd ? { start: row.halfStart, end: row.halfEnd } : null,
     };
 }
 /**
  * True if an approved leave covers the given instant — matched by CALENDAR DAY
  * in the configured timezone. For leaves with `approvedDays` set (exam leave),
  * only those specific days count as excused, not the full requested range.
+ * A half-day leave covers only its 3 h window on that day.
  */
 export async function hasApprovedLeaveCovering(guildId, userId, at) {
     const rows = await prisma.leaveRequest.findMany({
         where: { guildId, userId, status: "approved" },
-        select: { startAt: true, endAt: true, approvedDays: true },
+        select: { startAt: true, endAt: true, approvedDays: true, halfDay: true, halfStart: true, halfEnd: true },
     });
-    const day = tzDateKey(at);
-    return rows.some((r) => {
-        if (r.approvedDays && r.approvedDays.length > 0) {
-            return r.approvedDays.split(",").includes(day);
-        }
-        return tzDateKey(r.startAt) <= day && day <= tzDateKey(r.endAt);
-    });
+    // A half day covers only its window: a meeting outside it is not excused.
+    return rows.some((r) => leaveCoversAt(r, at));
 }
 export function listLeaves(guildId, userId) {
     return prisma.leaveRequest.findMany({
