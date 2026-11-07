@@ -28,6 +28,7 @@ import {
 import { logEmbed, postLog } from "../lib/log.js";
 import { beginButton, IDS as ONBOARD_IDS } from "./onboarding.js";
 import { LEAVE_IDS, leavePanelButton, leavePanelEmbed } from "./leave.js";
+import { panelNeedsEdit } from "../lib/panelRefresh.js";
 import {
   TICKET_IDS,
   panelButton,
@@ -395,7 +396,7 @@ async function buildInformation(guild: Guild, roles: RoleMap) {
  */
 const CONTENT_VERSIONS = {
   rules: "v3",
-  guide: "v3",
+  guide: "v4",
   announcements: "v3",
 } as const;
 
@@ -565,6 +566,7 @@ function guideContent(guild: Guild): string {
     "- Casual Leave: up to 1 day, requested at least 1 day in advance.",
     "- Sick Leave: 1 day without a document. Longer periods require a medical certificate uploaded in the private HR channel that is created for your request.",
     "- University Examination Leave: request the exam period 3 days in advance and upload your timetable. HR approves the specific exam days from the timetable.",
+    "- Half day: one date and a 3-hour window starting between 11:30 and 16:00. The rest of the day is a normal working day, so plan, EOD and voice hours (2.5 h that day) still apply.",
     "Approved leave automatically excuses you from meetings on the covered days. Your Team Lead is notified so handovers can be arranged.",
     "",
     "**Getting help**",
@@ -916,8 +918,9 @@ async function postPanelOnce(
     // Panels seeded by older builds carry the button but no embed, so the
     // channel showed a bare button with no instructions. Repair in place
     // rather than reposting, which would break any pinned link to it.
+    // Also refresh panels whose text is out of date (e.g. the leave panel gaining Half day).
     const suppressed = existing.flags.has(MessageFlags.SuppressEmbeds);
-    if (existing.embeds.length === 0 || suppressed) {
+    if (panelNeedsEdit(existing.embeds, suppressed, embed.data)) {
       // SuppressEmbeds makes Discord accept an embed and then hide it, so the
       // flag has to be cleared in the same edit or the repair looks successful
       // while the panel stays blank.
