@@ -6,7 +6,7 @@ import { clearCalendarCache } from "./calendar.js";
 import { clearInsightsCache } from "./insights.js";
 import { joinedStatus, meetingWindow, secondsInWindow } from "./meetingMath.js";
 import { emitAttendance } from "./meetingSync.js";
-import { halfWindowError, halfWindowUtc, leaveCoversAt } from "../lib/halfDay.js";
+import { halfWindowError, halfWindowUtc, leaveCoversAt, toHhmm, toMinutes } from "../lib/halfDay.js";
 /**
  * Leave granted by HR straight from the dashboard profile, for specific days.
  *
@@ -73,7 +73,8 @@ function validate(input) {
         const bad = halfWindowError(input.half.start, input.half.end);
         if (bad)
             throw new LeaveInputError(bad);
-        half = { start: input.half.start, end: input.half.end };
+        // Stored as "HH:MM" (VARCHAR(5)): "13:00:00" or " 13:00" would not fit / would not match.
+        half = { start: toHhmm(toMinutes(input.half.start)), end: toHhmm(toMinutes(input.half.end)) };
     }
     return { days, type, reason, by, half };
 }
