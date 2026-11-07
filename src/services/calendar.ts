@@ -2,6 +2,7 @@ import { prisma } from "../core/db.js";
 import { org, activeProjects } from "../config/loader.js";
 import { shiftDayKey, splitByTzDay, tzDateKey, tzDayStartUtc } from "../lib/time.js";
 import { holidayMap } from "./holidays.js";
+import { halfDayRules, halfWindowOf } from "../lib/halfDay.js";
 
 /**
  * Calendar-shaped attendance: for every member in scope, a per-day status for a
@@ -34,6 +35,20 @@ export interface CalendarDay {
   seconds: number;
   firstJoinAt: Date | null;
   onTime: boolean;
+  /**
+   * Approved half-day leave that day: NOT a day off, only the window is skipped.
+   * The day is judged on `requiredSeconds` (target − 3 h) and `loginBy` (moved
+   * to the window end when the window starts at or before the cutoff).
+   */
+  halfDay?: { start: string; end: string };
+  requiredSeconds?: number;
+  loginBy?: string;
+}
+
+/** The hours target and join cutoff that apply to this calendar day. */
+export function dayTargets(d: Pick<CalendarDay, "requiredSeconds" | "loginBy">): { requiredSeconds: number; loginBy: string } {
+  const p = org.attendancePolicy;
+  return { requiredSeconds: d.requiredSeconds ?? Math.round(p.minHours * 3600), loginBy: d.loginBy ?? p.loginBy };
 }
 
 export interface MemberCalendar {
@@ -148,7 +163,7 @@ export async function buildCalendars(
         startAt: { lt: rangeEnd },
         endAt: { gt: rangeStart },
       },
-      select: { userId: true, startAt: true, endAt: true, approvedDays: true },
+      select: { userId: true, startAt: true, endAt: true, approvedDays: true, halfDay: true, halfStart: true, halfEnd: true },
     }),
     // Earliest day each member has ANY recorded attendance. Used as a floor on
     // their tracked-from date so a late-created Member row (a resync, say)
@@ -187,7 +202,15 @@ export async function buildCalendars(
   }
 
   const onLeave = new Set<string>();
+  // Half-day leave: the member works that day; only the window is skipped.
+  const halfOn = new Map<string, { start: string; end: string }>();
   for (const l of leaves) {
+    const half = halfWindowOf(l);
+    if (half) {
+      const d = (l.approvedDays ?? "").split(",").filter(Boolean)[0] ?? tzDateKey(l.startAt);
+      halfOn.set(key(l.userId, d), half);
+      continue;
+    }
     if (l.approvedDays) {
       // Exam leave: only the specific days HR approved from the timetable.
       for (const d of l.approvedDays.split(",").filter(Boolean)) onLeave.add(key(l.userId, d));
@@ -222,7 +245,11 @@ export async function buildCalendars(
       const k = key(m.id, day);
       const seconds = secondsBy.get(k) ?? 0;
       const firstJoinAt = firstJoinBy.get(k) ?? null;
-      const onTime = firstJoinAt !== null && firstJoinAt <= cutoffs.get(day)!;
+      const half = onLeave.has(k) ? undefined : halfOn.get(k);
+      const rules = half ? halfDayRules(p, half) : null;
+      const cutoff = rules ? localTimeOn(day, rules.loginBy) : cutoffs.get(day)!;
+      const required = rules ? rules.requiredSeconds : requiredSeconds;
+      const onTime = firstJoinAt !== null && firstJoinAt <= cutoff;
 
       let status: DayStatus;
       if (day > today) status = "future";
@@ -233,7 +260,7 @@ export async function buildCalendars(
       else if (onLeave.has(k)) status = "leave";
       else if (!workday.get(day)) status = "off";
       else if (firstJoinAt === null) status = "missing";
-      else if (onTime && seconds >= requiredSeconds) status = "good";
+      else if (onTime && seconds >= required) status = "good";
       else status = "partial";
 
       if (status === "good") totals.good++;
@@ -241,7 +268,9 @@ export async function buildCalendars(
       else if (status === "missing") totals.missing++;
       else if (status === "leave") totals.leave++;
 
-      return { day, status, seconds, firstJoinAt, onTime };
+      return rules
+        ? { day, status, seconds, firstJoinAt, onTime, halfDay: half, requiredSeconds: rules.requiredSeconds, loginBy: rules.loginBy }
+        : { day, status, seconds, firstJoinAt, onTime };
     });
 
     return {

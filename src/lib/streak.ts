@@ -3,6 +3,8 @@ interface StreakDay {
   day: string;
   status: string;
   seconds: number;
+  /** Set on a half-day leave day: that day's lower target (overrides opts.requiredSeconds). */
+  requiredSeconds?: number;
 }
 
 /**
@@ -13,7 +15,7 @@ interface StreakDay {
 export function shortStreak(
   days: StreakDay[],
   opts: { settled: string; n: number; requiredSeconds: number; covered: Set<string>; startsOn?: string }
-): { day: string; seconds: number; absent: boolean }[] | null {
+): { day: string; seconds: number; absent: boolean; requiredSeconds: number }[] | null {
   const counted = days.filter(
     (d) =>
       d.day <= opts.settled &&
@@ -24,9 +26,11 @@ export function shortStreak(
   const last = counted.slice(-opts.n);
   // The streak must end on the latest settled working day: warn once, promptly.
   const short = (d: (typeof last)[number]) =>
-    d.status === "missing" || (d.status === "partial" && d.seconds < opts.requiredSeconds);
+    d.status === "missing" || (d.status === "partial" && d.seconds < (d.requiredSeconds ?? opts.requiredSeconds));
   if (!last.every(short)) return null;
   if (last.some((d) => opts.covered.has(d.day))) return null;
-  return last.map((d) => ({ day: d.day, seconds: d.seconds, absent: d.status === "missing" }));
+  return last.map((d) => ({
+    day: d.day, seconds: d.seconds, absent: d.status === "missing", requiredSeconds: d.requiredSeconds ?? opts.requiredSeconds,
+  }));
 }
 

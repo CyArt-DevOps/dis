@@ -12,6 +12,9 @@ export interface AnalysisDay {
   /** Minutes after local midnight of the first join, if present. */
   firstJoinMin: number | null;
   onTime: boolean;
+  /** Half-day leave day: its own target and cutoff (override the input's). */
+  requiredSeconds?: number;
+  loginByMin?: number;
 }
 
 export interface AnalysisInput {
@@ -127,7 +130,7 @@ export function analyse(input: AnalysisInput): Analysis {
       weekday: WD[n - 1]!,
       workdays: ds.length,
       absent: ds.filter((d) => d.status === "missing").length,
-      short: ds.filter((d) => d.status === "partial" && d.seconds < req).length,
+      short: ds.filter((d) => d.status === "partial" && d.seconds < (d.requiredSeconds ?? req)).length,
       late: ds.filter((d) => d.firstJoinMin !== null && !d.onTime).length,
       avgSeconds: present.length ? present.reduce((a, d) => a + d.seconds, 0) / present.length : 0,
     };
@@ -146,9 +149,12 @@ export function analyse(input: AnalysisInput): Analysis {
   // Hours balance
   let shortfall = 0;
   let surplus = 0;
+  let target = 0;
   for (const d of work) {
-    if (d.seconds < req) shortfall += req - d.seconds;
-    else surplus += d.seconds - req;
+    const r = d.requiredSeconds ?? req;
+    target += r;
+    if (d.seconds < r) shortfall += r - d.seconds;
+    else surplus += d.seconds - r;
   }
   const bestDay = days.reduce<{ day: string; seconds: number } | null>(
     (best, d) => (d.seconds > (best?.seconds ?? 0) ? { day: d.day, seconds: d.seconds } : best),
@@ -174,13 +180,14 @@ export function analyse(input: AnalysisInput): Analysis {
     .map((d) => d.firstJoinMin)
     .filter((x): x is number => x !== null && x > 0)
     .sort((x, y) => x - y);
-  const lates = work.filter((d) => d.firstJoinMin !== null && d.firstJoinMin > loginByMin);
+  const cutOf = (d: AnalysisDay) => d.loginByMin ?? loginByMin;
+  const lates = work.filter((d) => d.firstJoinMin !== null && d.firstJoinMin > cutOf(d));
   const join = {
     earliest: joins[0] ?? null,
     latest: joins[joins.length - 1] ?? null,
     median: joins.length ? joins[Math.floor(joins.length / 2)]! : null,
     lateDays: lates.length,
-    avgLateMin: lates.length ? Math.round(lates.reduce((s, d) => s + (d.firstJoinMin! - loginByMin), 0) / lates.length) : 0,
+    avgLateMin: lates.length ? Math.round(lates.reduce((s, d) => s + (d.firstJoinMin! - cutOf(d)), 0) / lates.length) : 0,
   };
 
   // ---------------------------------------------------------------- prose
@@ -232,7 +239,7 @@ export function analyse(input: AnalysisInput): Analysis {
     paragraphs.push({
       title: "Hours balance",
       body:
-        `Across ${work.length} working day${work.length === 1 ? "" : "s"} the target was ${hm(req * work.length)}. ` +
+        `Across ${work.length} working day${work.length === 1 ? "" : "s"} the target was ${hm(target)}. ` +
         (shortfall
           ? `${name} fell ${hm(shortfall)} short in total on days below target${surplus ? `, and served ${hm(surplus)} above target on other days` : ""}. Extra hours on one day do not offset a short or missed day under the policy.`
           : `${name} met or exceeded the daily target on every working day${surplus ? `, with ${hm(surplus)} served above target in total` : ""}.`) +

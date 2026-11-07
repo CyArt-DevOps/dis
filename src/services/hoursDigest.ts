@@ -62,10 +62,16 @@ function targetFor(guild: Guild, p: ProjectDef, m: MemberCalendar): { channel: T
   return general ? { channel: general, label: p.name } : null;
 }
 
-function line(m: MemberCalendar, required: number, loginByMin: number, day: string): { order: number; text: string } {
+function line(m: MemberCalendar, requiredDefault: number, loginByDefault: number, day: string): { order: number; text: string } {
   const d = m.days[0]!;
   if (d.status === "leave") return { order: 4, text: `🟧 **${m.fullName}** · on leave` };
-  if (d.status === "missing" || (!d.firstJoinAt && d.seconds === 0)) return { order: 5, text: `❌ **${m.fullName}** · 0h 00m (not joined)` };
+  // Half-day leave: not off for the day; judged on its own target and cutoff.
+  const required = d.requiredSeconds ?? requiredDefault;
+  const loginByMin = d.loginBy ? minutesOf(d.loginBy) : loginByDefault;
+  const halfNote = d.halfDay ? `half-day leave ${d.halfDay.start}–${d.halfDay.end}` : null;
+  if (d.status === "missing" || (!d.firstJoinAt && d.seconds === 0)) {
+    return { order: 5, text: `❌ **${m.fullName}** · 0h 00m (not joined${halfNote ? `, ${halfNote}` : ""})` };
+  }
   const joinMin = d.firstJoinAt ? Math.round((d.firstJoinAt.getTime() - tzDayStartUtc(day).getTime()) / 60_000) : null;
   const late = joinMin !== null && joinMin > loginByMin ? joinMin - loginByMin : 0;
   const met = d.seconds >= required;
@@ -73,6 +79,7 @@ function line(m: MemberCalendar, required: number, loginByMin: number, day: stri
   const extra = [
     late ? `late by ${late} min` : null,
     met ? null : `${hm(required - d.seconds)} short`,
+    halfNote,
   ].filter(Boolean);
   return {
     order: met && !late ? 1 : met ? 2 : 3,

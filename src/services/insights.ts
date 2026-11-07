@@ -1,7 +1,7 @@
 import { prisma, withDbRetry } from "../core/db.js";
 import { org } from "../config/loader.js";
 import { shiftDayKey, tzDateKey, tzDayStartUtc } from "../lib/time.js";
-import { buildCalendars, type CalendarDay, type MemberCalendar } from "./calendar.js";
+import { buildCalendars, dayTargets, type CalendarDay, type MemberCalendar } from "./calendar.js";
 import { holidayMap, isWorkingDay } from "./holidays.js";
 import { summarizeCounts } from "./attendanceStats.js";
 
@@ -77,7 +77,8 @@ function trackingStart(): string {
 /** Violations a single calendar day represents (none for good/off/leave). */
 function dayViolations(d: CalendarDay): Violation[] {
   const p = policy();
-  const req = requiredSeconds();
+  // A half-day leave day has its own (lower) target and possibly a later cutoff.
+  const { requiredSeconds: req, loginBy } = dayTargets(d);
   if (d.status === "missing") {
     return [
       {
@@ -95,13 +96,13 @@ function dayViolations(d: CalendarDay): Violation[] {
   if (!d.onTime && d.firstJoinAt) {
     const late = Math.max(
       0,
-      Math.round((d.firstJoinAt.getTime() - localTimeOn(d.day, p.loginBy).getTime()) / 60_000)
+      Math.round((d.firstJoinAt.getTime() - localTimeOn(d.day, loginBy).getTime()) / 60_000)
     );
     out.push({
       kind: "late-login",
       severity: late >= 120 ? "high" : late >= 30 ? "medium" : "low",
       day: d.day,
-      detail: `Joined ${hhmm(minutesIntoDay(d.day, d.firstJoinAt))}, ${late} min after the ${p.loginBy} cutoff`,
+      detail: `Joined ${hhmm(minutesIntoDay(d.day, d.firstJoinAt))}, ${late} min after the ${loginBy} cutoff${d.halfDay ? ` (half-day leave ${d.halfDay.start}–${d.halfDay.end})` : ""}`,
       minutesLate: late,
     });
   }
@@ -379,7 +380,7 @@ async function computeOrgInsights(guildId: string, from: string, to: string): Pr
       }
       if (d.status === "partial") {
         const late = !d.onTime;
-        const short = d.seconds < requiredSeconds();
+        const short = d.seconds < dayTargets(d).requiredSeconds;
         if (late && short) totals.lateAndShort++;
         else if (late) totals.late++;
         else if (short) totals.short++;
@@ -446,7 +447,7 @@ async function computeOrgInsights(guildId: string, from: string, to: string): Pr
       else if (d.status === "leave") snap.leave++;
       else if (d.status === "partial") {
         const late = !d.onTime;
-        const short = d.seconds < requiredSeconds();
+        const short = d.seconds < dayTargets(d).requiredSeconds;
         if (late && short) snap.lateAndShort++;
         else if (late) snap.late++;
         else snap.short++;

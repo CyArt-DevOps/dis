@@ -128,7 +128,7 @@ export async function runHoursSweep(guildId: string): Promise<SweepResult> {
     });
     if (!streak) continue;
     const lines = streak.map((d) =>
-      d.absent ? `${dayLabel(d.day)}: absent (no voice presence)` : `${dayLabel(d.day)}: served ${hm(d.seconds)} of ${hm(required)}`
+      d.absent ? `${dayLabel(d.day)}: absent (no voice presence)` : `${dayLabel(d.day)}: served ${hm(d.seconds)} of ${hm(d.requiredSeconds)}`
     );
     const row = await prisma.warn.create({
       data: {

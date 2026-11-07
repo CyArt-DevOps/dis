@@ -48,4 +48,10 @@ describe("shortStreak", () => {
     const days = [d("2026-10-22", "missing"), d("2026-10-23", "missing"), d("2026-10-24", "missing")];
     expect(shortStreak(days, opts({ settled: "2026-10-23", startsOn: "2026-10-23" }))).toBeNull();
   });
+  it("HG-DIS-01 judges a half-day leave day on its lower target", () => {
+    const half = { ...d("2026-10-23", "partial", 3), requiredSeconds: 2.5 * 3600 };
+    expect(shortStreak([d("2026-10-22", "partial", 4), half], opts())).toBeNull();
+    const shortHalf = { ...d("2026-10-23", "partial", 2), requiredSeconds: 2.5 * 3600 };
+    expect(shortStreak([d("2026-10-22", "partial", 4), shortHalf], opts())![1]).toMatchObject({ requiredSeconds: 2.5 * 3600 });
+  });
 });

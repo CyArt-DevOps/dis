@@ -79,6 +79,12 @@ function fmtDay(day: string, opts: Intl.DateTimeFormatOptions = { day: "2-digit"
   return new Date(day + "T00:00:00Z").toLocaleDateString("en-GB", { ...opts, timeZone: "UTC" });
 }
 
+/** "HH:MM" → minutes after midnight. */
+function hhmmToMin(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+}
+
 function fmtDate(d: Date | null | undefined): string {
   if (!d) return "-";
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
@@ -139,7 +145,7 @@ export async function buildMemberReport(
   const presentDays = settled.filter((d) => d.firstJoinAt).length;
   const voice = settled.reduce((a, d) => a + d.seconds, 0);
   const lateDays = settled.filter((d) => (d.status === "partial" || d.status === "good") && d.firstJoinAt && !d.onTime).length;
-  const shortDays = settled.filter((d) => d.status === "partial" && d.seconds < required).length;
+  const shortDays = settled.filter((d) => d.status === "partial" && d.seconds < (d.requiredSeconds ?? required)).length;
   const periodHolidays = holidays.filter((h) => h.day >= period.from && h.day <= to);
   const periodLeaves = profile.leaves.filter(
     (l) => tzDateKey(l.startAt) <= to && tzDateKey(l.endAt) >= period.from
@@ -189,6 +195,7 @@ export async function buildMemberReport(
       seconds: d.seconds,
       firstJoinMin: d.firstJoinAt ? Math.round((d.firstJoinAt.getTime() - tzDayStartUtc(d.day).getTime()) / 60_000) : null,
       onTime: d.onTime,
+      ...(d.halfDay ? { requiredSeconds: d.requiredSeconds, loginByMin: d.loginBy ? hhmmToMin(d.loginBy) : undefined } : {}),
     })),
     requiredSeconds: required,
     loginByMin,

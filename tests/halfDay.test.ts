@@ -5,6 +5,7 @@ import {
   halfDayLabel,
   halfWindowError,
   halfWindowUtc,
+  halfDayRules,
   leaveCoversAt,
   leaveLabel,
 } from "../src/lib/halfDay.js";
@@ -55,5 +56,17 @@ describe("leaveCoversAt", () => {
     expect(leaveCoversAt(half, new Date("2026-11-09T10:00:00Z"))).toBe(true); // 15:30 IST
     expect(leaveCoversAt(half, new Date("2026-11-09T10:30:00Z"))).toBe(false); // 16:00 IST, window over
     expect(leaveCoversAt(half, new Date("2026-11-10T08:00:00Z"))).toBe(false); // next day
+  });
+});
+
+describe("halfDayRules", () => {
+  const policy = { minHours: 5.5, loginBy: "14:00" };
+  it("drops the target by 3 h", () => {
+    expect(halfDayRules(policy, { start: "13:00", end: "16:00" }).requiredSeconds).toBe(2.5 * 3600);
+  });
+  it("moves the cutoff to the window end only when the window starts at or before it", () => {
+    expect(halfDayRules(policy, { start: "14:00", end: "17:00" }).loginBy).toBe("17:00");
+    expect(halfDayRules(policy, { start: "11:30", end: "14:30" }).loginBy).toBe("14:30");
+    expect(halfDayRules(policy, { start: "14:30", end: "17:30" }).loginBy).toBe("14:00");
   });
 });

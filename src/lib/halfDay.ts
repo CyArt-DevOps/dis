@@ -98,3 +98,19 @@ export function leaveCoversAt(row: LeaveCoverage, at: Date): boolean {
   const { start, end } = halfWindowUtc(day, w.start, w.end);
   return at >= start && at < end;
 }
+
+/**
+ * A day's attendance rules with an approved half day (same as the EMS close):
+ * the hours target drops by 3 h, and when the window starts at or before the
+ * join cutoff the cutoff moves to the window end.
+ */
+export function halfDayRules(
+  policy: { minHours: number; loginBy: string },
+  half: { start: string; end: string }
+): { requiredSeconds: number; loginBy: string } {
+  const requiredSeconds = Math.max(0, Math.round(policy.minHours * 3600) - HALF_DAY_MINUTES * 60);
+  const s = toMinutes(half.start);
+  const cut = toMinutes(policy.loginBy);
+  const loginBy = s !== null && cut !== null && s <= cut ? half.end : policy.loginBy;
+  return { requiredSeconds, loginBy };
+}
