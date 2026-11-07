@@ -69,4 +69,11 @@ describe("halfDayRules", () => {
     expect(halfDayRules(policy, { start: "11:30", end: "14:30" }).loginBy).toBe("14:30");
     expect(halfDayRules(policy, { start: "14:30", end: "17:30" }).loginBy).toBe("14:00");
   });
+  it("moves the cutoff like EMS dayExpectations: window start at or before 14:00, whatever the configured cutoff", () => {
+    const early = { minHours: 5.5, loginBy: "11:00" };
+    expect(halfDayRules(early, { start: "13:00", end: "16:00" }).loginBy).toBe("16:00");
+    const late = { minHours: 5.5, loginBy: "18:00" };
+    expect(halfDayRules(late, { start: "14:30", end: "17:30" }).loginBy).toBe("18:00");
+    expect(halfDayRules(late, { start: "14:00", end: "17:00" }).loginBy).toBe("17:00");
+  });
 });

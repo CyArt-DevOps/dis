@@ -38,7 +38,7 @@ export interface CalendarDay {
   /**
    * Approved half-day leave that day: NOT a day off, only the window is skipped.
    * The day is judged on `requiredSeconds` (target − 3 h) and `loginBy` (moved
-   * to the window end when the window starts at or before the cutoff).
+   * to the window end when the window starts at or before 14:00, as EMS).
    */
   halfDay?: { start: string; end: string };
   requiredSeconds?: number;
