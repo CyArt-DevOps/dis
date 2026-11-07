@@ -245,6 +245,10 @@ model LeaveRequest {
   // The uid both platforms share (HR actions sync).
   uid          String   @unique @default(uuid()) @db.VarChar(36)
   updatedAt    DateTime @default(now()) @updatedAt
+  // Half-day leave (EMS spec 2026-11-07 §7): one date, a 3 h window inside 11:30–19:00 IST, "HH:MM".
+  halfDay      Boolean  @default(false)
+  halfStart    String?  @db.VarChar(5)
+  halfEnd      String?  @db.VarChar(5)
 
   @@index([guildId, status])
   @@index([userId, status])
