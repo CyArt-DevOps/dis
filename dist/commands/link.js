@@ -1,6 +1,6 @@
 import { MessageFlags, SlashCommandBuilder } from "discord.js";
 import { linkButtonRow } from "../interactions/emsLink.js";
-import { logRosterFailure, replyWith } from "../interactions/rosterLink.js";
+import { failureResult, logRosterFailure, replyWith } from "../interactions/rosterLink.js";
 import { integrationEnabled } from "../services/emsClient.js";
 import { startRoster } from "../services/rosterLink.js";
 /**
@@ -26,7 +26,7 @@ export const link = {
         }
         catch (err) {
             logRosterFailure("start", interaction.user.id, err);
-            await replyWith(interaction, { status: "error" });
+            await replyWith(interaction, failureResult(err));
         }
     },
 };

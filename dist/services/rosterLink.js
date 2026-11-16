@@ -1,3 +1,4 @@
+import { discordTimestamp } from "../lib/time.js";
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown, } from "discord.js";
 import { emsPost } from "./emsClient.js";
 export const ROSTER_IDS = {
@@ -53,6 +54,11 @@ export function rosterMessage(r) {
             return "You are not on the intern roster (the intern form was not filled). If you did fill it, click **I filled the form**.";
         case "not_allowed":
             return "There is nothing to do for this account. Run /link again.";
+        case "busy": {
+            const at = r.retryAt ? new Date(r.retryAt) : null;
+            const when = at && !Number.isNaN(at.getTime()) ? ` after ${discordTimestamp(at, "t")} (${discordTimestamp(at, "R")})` : " in about 10 minutes";
+            return `The EMS portal is busy right now. Please run /link again${when}. Trying earlier won't help.`;
+        }
         case "rate_limited":
             return "Too many tries. Please wait a while and try again.";
         case "discord_taken":
