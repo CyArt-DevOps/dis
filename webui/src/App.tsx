@@ -11,6 +11,7 @@ import { MeetingsPage } from "./pages/Meetings";
 import { MeetingDetailPage } from "./pages/MeetingDetail";
 import { WarningsPage } from "./pages/Warnings";
 import { HolidaysPage } from "./pages/Holidays";
+import { TenurePage } from "./pages/Tenure";
 import { HrBadge, HrPasswordLink, HrProvider } from "./lib/hr";
 
 const ICON: Record<string, ReactNode> = {
@@ -45,6 +46,12 @@ const ICON: Record<string, ReactNode> = {
       <path d="M3 9.5h18M8 2.5v4M16 2.5v4M12 12.5l1.2 2.4 2.6.4-1.9 1.8.5 2.6-2.4-1.3-2.4 1.3.5-2.6-1.9-1.8 2.6-.4z" />
     </>
   ),
+  tenure: (
+    <>
+      <path d="M2 9 12 4l10 5-10 5L2 9z" />
+      <path d="M6 11v5c1.8 1.6 3.8 2.4 6 2.4s4.2-.8 6-2.4v-5M22 9v6" />
+    </>
+  ),
 };
 
 const TABS = [
@@ -54,6 +61,7 @@ const TABS = [
   { path: "/meetings", name: "meetings", label: "Meetings" },
   { path: "/warnings", name: "warnings", label: "Warnings" },
   { path: "/holidays", name: "holidays", label: "Holidays" },
+  { path: "/tenure", name: "tenure", label: "Tenure Completed" },
 ] as const;
 
 function Icon({ name }: { name: string }) {
@@ -221,6 +229,7 @@ export default function App() {
           {route.name === "meetings" ? <MeetingsPage /> : null}
           {route.name === "meeting" && route.meetingId ? <MeetingDetailPage id={route.meetingId} /> : null}
           {route.name === "warnings" ? <WarningsPage /> : null}
+          {route.name === "tenure" ? <TenurePage /> : null}
           {route.name === "holidays" ? <HolidaysPage today={config.data?.today ?? new Date().toISOString().slice(0, 10)} /> : null}
         </main>
       </div>

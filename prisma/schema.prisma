@@ -319,3 +319,23 @@ model OutboundEvent {
 
   @@index([deliveredAt, nextAttemptAt])
 }
+
+/// Interns who report their internship tenure as completed (Tenure Completed button
+/// on the EMS access announcement). One row per Discord user; a resubmit replaces it.
+model TenureCompletion {
+  userId       String   @id @db.VarChar(32)
+  guildId      String   @db.VarChar(32)
+  username     String   @db.VarChar(100)
+  name         String   @db.VarChar(100)
+  email        String   @db.VarChar(191)
+  phone        String   @db.VarChar(20)
+  handoverDone Boolean
+  handoverDate String?  @db.VarChar(10) // YYYY-MM-DD
+  project      String?  @db.VarChar(100)
+  moduleNum    Int?
+  podNum       Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([guildId, updatedAt])
+}

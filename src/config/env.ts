@@ -31,6 +31,8 @@ const schema = z.object({
   EMS_API_URL: z.string().url().optional(),
   // Shared HMAC secret for requests the bot sends to EMS (same value in EMS .env).
   INTEGRATION_SECRET: z.string().min(32).optional(),
+  // Channel where the bot posts the EMS access announcement with the Tenure Completed button.
+  TENURE_CHANNEL_ID: z.string().regex(/^\d{17,20}$/).default("1520707249587359764"),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
