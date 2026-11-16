@@ -2,6 +2,7 @@ import type { Interaction, InteractionEditReplyOptions, ModalSubmitInteraction }
 import type { InteractionHandler } from "../core/registry.js";
 import { logger } from "../core/logger.js";
 import { EmsHttpError, describeEmsError } from "../lib/emsErrors.js";
+import { EmsCoolingDown } from "../lib/emsBreaker.js";
 import { env } from "../config/env.js";
 import {
   ROSTER_IDS,
@@ -18,6 +19,10 @@ const idOf = (i: Interaction) => (i.isButton() || i.isModalSubmit() ? i.customId
 
 /** Never log the error itself: an EmsHttpError message carries part of the response body. */
 export function logRosterFailure(step: string, userId: string, err: unknown): void {
+  if (err instanceof EmsCoolingDown) {
+    logger.info({ user: userId, step, reason: "paused", until: err.retryAt.toISOString() }, "EMS roster link skipped: calls paused");
+    return;
+  }
   let emsHost: string | undefined;
   try {
     emsHost = env.EMS_API_URL ? new URL(env.EMS_API_URL).host : undefined;
@@ -30,6 +35,11 @@ export function logRosterFailure(step: string, userId: string, err: unknown): vo
   );
 }
 
+/** What to tell the user when the EMS call threw: "busy" with a time while calls are paused. */
+export function failureResult(err: unknown): RosterResult {
+  return err instanceof EmsCoolingDown ? { status: "busy", retryAt: err.retryAt.toISOString() } : { status: "error" };
+}
+
 /** Shared by /link and the two modals: the reply is ephemeral (deferred with the Ephemeral flag). */
 export async function replyWith(i: { editReply(o: InteractionEditReplyOptions): Promise<unknown> }, r: RosterResult) {
   await i.editReply({ content: rosterMessage(r), components: rosterComponents(r) });
@@ -40,7 +50,7 @@ async function submit(i: ModalSubmitInteraction, step: string, call: () => Promi
     await replyWith(i, await call());
   } catch (err) {
     logRosterFailure(step, i.user.id, err);
-    await replyWith(i, { status: "error" });
+    await replyWith(i, failureResult(err));
   }
 }
 

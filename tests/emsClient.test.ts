@@ -46,6 +46,17 @@ describe("emsPost", () => {
     expect(err.challenge).toBe(true);
     expect(err.message).not.toContain("<html>");
   });
+  it("pauses calls after repeated connection resets", async () => {
+    const { resetEmsBreaker } = await import("../src/services/emsClient.js");
+    resetEmsBreaker();
+    fetchMock.mockRejectedValue(new TypeError("fetch failed", { cause: { code: "ECONNRESET" } }));
+    for (let k = 0; k < 3; k++) await emsPost("/events", {}).catch(() => null);
+    fetchMock.mockClear();
+    const err = await emsPost("/events", {}).catch((e) => e);
+    expect(err.name).toBe("EmsCoolingDown");
+    expect(fetchMock).not.toHaveBeenCalled();
+    resetEmsBreaker();
+  });
   it("strips trailing slashes from EMS_API_URL", async () => {
     env.EMS_API_URL = "https://ems.example.test//";
     fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));

@@ -62,6 +62,16 @@ describe("/link", () => {
     expect(customIds(a.editReply.mock.calls[0]![0])).toEqual([ROSTER_IDS.verify]);
     expect(customIds(b.editReply.mock.calls[0]![0])).toEqual([ROSTER_IDS.claim]);
   });
+  it("while EMS calls are paused it says when to try again", async () => {
+    const { EmsCoolingDown } = await import("../src/lib/emsBreaker.js");
+    emsPost.mockRejectedValue(new EmsCoolingDown(new Date("2026-11-16T08:30:00Z")));
+    const i = slash();
+    await link.execute(i as never);
+    const content = (i.editReply.mock.calls[0]![0] as { content: string }).content;
+    expect(content).toMatch(/busy right now/);
+    expect(content).toContain("<t:1794817800:t>");
+    expect(warn).not.toHaveBeenCalled();
+  });
   it("an EMS error shows a generic message and logs only the status, never the body", async () => {
     emsPost.mockRejectedValue(new EmsHttpError(500, '{"password":"leak"}'));
     const i = slash();
