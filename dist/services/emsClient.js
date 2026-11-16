@@ -1,5 +1,5 @@
 import { env } from "../config/env.js";
-import { EmsHttpError } from "../lib/emsErrors.js";
+import { EmsHttpError, EmsNotJsonError, looksLikeChallenge } from "../lib/emsErrors.js";
 import { signRequest } from "../lib/signing.js";
 export { EmsHttpError };
 export class IntegrationDisabled extends Error {
@@ -30,6 +30,13 @@ export async function emsPost(path, body, timeoutMs = 8000) {
     const text = await res.text();
     if (!res.ok)
         throw new EmsHttpError(res.status, text);
-    return (text ? JSON.parse(text) : {});
+    if (!text)
+        return {};
+    try {
+        return JSON.parse(text);
+    }
+    catch {
+        throw new EmsNotJsonError(res.status, res.headers.get("content-type") ?? "", looksLikeChallenge(text));
+    }
 }
 //# sourceMappingURL=emsClient.js.map

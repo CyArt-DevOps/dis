@@ -1,10 +1,18 @@
 import { logger } from "../core/logger.js";
-import { EmsHttpError } from "../lib/emsErrors.js";
+import { EmsHttpError, describeEmsError } from "../lib/emsErrors.js";
+import { env } from "../config/env.js";
 import { ROSTER_IDS, claimModal, claimRoster, rosterComponents, rosterMessage, verifyModal, verifyRoster, } from "../services/rosterLink.js";
 const idOf = (i) => (i.isButton() || i.isModalSubmit() ? i.customId : undefined);
 /** Never log the error itself: an EmsHttpError message carries part of the response body. */
 export function logRosterFailure(step, userId, err) {
-    logger.warn({ user: userId, step, status: err instanceof EmsHttpError ? err.status : undefined }, "EMS roster link failed");
+    let emsHost;
+    try {
+        emsHost = env.EMS_API_URL ? new URL(env.EMS_API_URL).host : undefined;
+    }
+    catch {
+        emsHost = "invalid";
+    }
+    logger.warn({ user: userId, step, status: err instanceof EmsHttpError ? err.status : undefined, reason: describeEmsError(err), emsHost }, "EMS roster link failed");
 }
 /** Shared by /link and the two modals: the reply is ephemeral (deferred with the Ephemeral flag). */
 export async function replyWith(i, r) {
