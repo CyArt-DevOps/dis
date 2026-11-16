@@ -12,6 +12,7 @@ import { HolidayInputError, addHoliday, listHolidays, removeHoliday } from "../s
 import { WarningError, createManualWarning, addWarningNote, dismissWarning, memberWarnings, revokeWarning, listTerminations, listWarnings, runHoursSweep, sendAllProposed, sendWarning, terminateMember, terminationCandidates, } from "../services/warnings.js";
 import { clearCalendarCache } from "../services/calendar.js";
 import { buildMemberReport, reportPeriod, trackedFromOf } from "../services/reportPdf.js";
+import { listTenure } from "../services/tenure.js";
 import { HrAuthError, activeHrNames, changeOwnPassword, hrName, requireHr, verifyHr } from "../services/hrUsers.js";
 import { clearInsightsCache } from "../services/insights.js";
 import { prisma } from "../core/db.js";
@@ -236,6 +237,8 @@ app.post("/api/hr/password", jsonBody, sameOrigin, action(async (req) => {
     const ip = String(req.headers["cf-connecting-ip"] ?? req.ip ?? "unknown");
     await changeOwnPassword(String(b.name ?? ""), String(b.current ?? ""), String(b.next ?? ""), ip);
 }));
+// ----- Tenure Completed: holds email and phone, so even the list needs an HR token.
+app.post("/api/tenure/list", jsonBody, sameOrigin, requireHr, action((req) => listTenure(guildOf(req))));
 // ----- Public holidays
 app.get("/api/holidays", async (req, res) => {
     res.json(await listHolidays(guildOf(req)));

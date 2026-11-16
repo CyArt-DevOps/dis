@@ -19,6 +19,8 @@ import { initMeetings, restoreGrants } from "./services/meeting.js";
 import { setMeetingHooks, startScheduler, stopScheduler } from "./services/meetingScheduler.js";
 import { handleMeetingEnd, finalizeMeetingAttendance, handleMeetingStart, handleMeetingTick, initMeetingAttendance, } from "./services/meetingAttendance.js";
 import { leaveHandlers } from "./interactions/leave.js";
+import { tenureHandlers } from "./interactions/tenure.js";
+import { ensureTenureAnnouncement } from "./services/tenure.js";
 import { startMonthlySummary, stopMonthlySummary } from "./services/monthlySummary.js";
 import { startOutbox, stopOutbox } from "./services/emsOutbox.js";
 import { warmMemberCache } from "./services/memberCache.js";
@@ -74,6 +76,8 @@ async function main() {
         registry.registerHandler(h);
     for (const h of leaveHandlers)
         registry.registerHandler(h);
+    for (const h of tenureHandlers)
+        registry.registerHandler(h);
     registry.registerHandler(projectWizardHandler);
     registry.registerHandler(meetingPeopleSelectHandler);
     registry.registerHandler(scheduleModalHandler);
@@ -119,6 +123,8 @@ async function main() {
         startTicketArchiveSweep(client);
         startScheduledMessages(client);
         void startDashboard();
+        // EMS access announcement with the Tenure Completed button (posted once, edited when its text changes).
+        void ensureTenureAnnouncement(client).catch((err) => logger.warn({ err }, "Tenure announcement failed"));
     });
     const shutdown = async (signal) => {
         logger.info({ signal }, "Shutting down");
