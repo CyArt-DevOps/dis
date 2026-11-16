@@ -1,5 +1,5 @@
 import { env } from "../config/env.js";
-import { EmsHttpError } from "../lib/emsErrors.js";
+import { EmsHttpError, EmsNotJsonError, looksLikeChallenge } from "../lib/emsErrors.js";
 import { signRequest } from "../lib/signing.js";
 
 export { EmsHttpError };
@@ -32,5 +32,10 @@ export async function emsPost<T = unknown>(path: string, body: unknown, timeoutM
   });
   const text = await res.text();
   if (!res.ok) throw new EmsHttpError(res.status, text);
-  return (text ? JSON.parse(text) : {}) as T;
+  if (!text) return {} as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new EmsNotJsonError(res.status, res.headers.get("content-type") ?? "", looksLikeChallenge(text));
+  }
 }

@@ -1,7 +1,8 @@
 import type { Interaction, InteractionEditReplyOptions, ModalSubmitInteraction } from "discord.js";
 import type { InteractionHandler } from "../core/registry.js";
 import { logger } from "../core/logger.js";
-import { EmsHttpError } from "../lib/emsErrors.js";
+import { EmsHttpError, describeEmsError } from "../lib/emsErrors.js";
+import { env } from "../config/env.js";
 import {
   ROSTER_IDS,
   claimModal,
@@ -17,7 +18,16 @@ const idOf = (i: Interaction) => (i.isButton() || i.isModalSubmit() ? i.customId
 
 /** Never log the error itself: an EmsHttpError message carries part of the response body. */
 export function logRosterFailure(step: string, userId: string, err: unknown): void {
-  logger.warn({ user: userId, step, status: err instanceof EmsHttpError ? err.status : undefined }, "EMS roster link failed");
+  let emsHost: string | undefined;
+  try {
+    emsHost = env.EMS_API_URL ? new URL(env.EMS_API_URL).host : undefined;
+  } catch {
+    emsHost = "invalid";
+  }
+  logger.warn(
+    { user: userId, step, status: err instanceof EmsHttpError ? err.status : undefined, reason: describeEmsError(err), emsHost },
+    "EMS roster link failed"
+  );
 }
 
 /** Shared by /link and the two modals: the reply is ephemeral (deferred with the Ephemeral flag). */

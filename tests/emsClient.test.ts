@@ -39,6 +39,13 @@ describe("emsPost", () => {
     expect(err).toBeInstanceOf(EmsHttpError);
     expect(err.status).toBe(400);
   });
+  it("throws EmsNotJsonError for a 200 bot-check page", async () => {
+    fetchMock.mockResolvedValue(new Response("<html>Bot Verification</html>", { status: 200, headers: { "content-type": "text/html" } }));
+    const err = await emsPost("/events", {}).catch((e) => e);
+    expect(err.name).toBe("EmsNotJsonError");
+    expect(err.challenge).toBe(true);
+    expect(err.message).not.toContain("<html>");
+  });
   it("strips trailing slashes from EMS_API_URL", async () => {
     env.EMS_API_URL = "https://ems.example.test//";
     fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));

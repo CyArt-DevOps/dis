@@ -68,7 +68,7 @@ describe("/link", () => {
     await link.execute(i as never);
     expect((i.editReply.mock.calls[0]![0] as { content: string }).content).toMatch(/isn't available/);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]![0]).toEqual({ user: USER, step: "start", status: 500 });
+    expect(warn.mock.calls[0]![0]).toMatchObject({ user: USER, step: "start", status: 500, reason: "http_500" });
     expect(JSON.stringify(warn.mock.calls)).not.toContain("leak");
   });
   it("integration off → plain ephemeral reply, no EMS call", async () => {
@@ -119,6 +119,6 @@ describe("roster buttons and modals", () => {
     emsPost.mockRejectedValue(new Error("network down"));
     const i = component("modal", ROSTER_IDS.claimModal, { name: "A B", email: "a@x.test", phone: "1234" });
     await handlerFor(i).handle(i as never);
-    expect(warn.mock.calls[0]![0]).toEqual({ user: USER, step: "claim", status: undefined });
+    expect(warn.mock.calls[0]![0]).toMatchObject({ user: USER, step: "claim", status: undefined });
   });
 });
