@@ -13,6 +13,9 @@ import { channelNames, moduleShort, podRepRoleNames, roleNames } from "../lib/na
 import { bootstrapServer } from "./bootstrap.js";
 import { syncGuildCommands } from "./commandSync.js";
 import { normProject } from "./integrationPayloads.js";
+import { collectProjectMessages, type BackupProgress } from "./messageBackup.js";
+import { backupDir, messageBackupName } from "./messageBackupFiles.js";
+import { renderBackupHtml } from "../lib/backupHtml.js";
 
 /** Choice lists in slash commands are baked at registration — refresh them. */
 async function refreshCommands(): Promise<void> {
@@ -72,10 +75,6 @@ function voiceNamesOf(p: ProjectDef): string[] {
     }
   }
   return dedupe(names);
-}
-
-function backupDir(): string {
-  return resolve(process.cwd(), "data", "backups");
 }
 
 function writeBackup(name: string, data: unknown): string {
@@ -216,12 +215,38 @@ export async function archiveProject(guild: Guild, key: string): Promise<void> {
   await refreshCommands();
 }
 
-export async function dissolveProject(guild: Guild, key: string): Promise<string> {
+export interface DissolveOptions {
+  actorTag?: string;
+  onProgress?: (p: BackupProgress) => void;
+}
+
+export interface DissolveResult {
+  /** Settings/roles JSON backup. */
+  backup: string;
+  /** Discord-style HTML with every message. */
+  messagesFile: string;
+  messagesBytes: number;
+}
+
+export async function dissolveProject(guild: Guild, key: string, opts: DissolveOptions = {}): Promise<DissolveResult> {
   const p = org.projects.find((pr) => pr.key === key);
   if (!p) throw new Error(`Project '${key}' not found`);
 
   const catNames = new Set(categoryNamesOf(p));
   const roleSet = new Set(roleNamesOf(p));
+
+  // Messages first: if anything can't be read, this throws and nothing is deleted.
+  const data = await collectProjectMessages(guild, catNames, {
+    project: p.name,
+    dissolvedBy: opts.actorTag ?? "unknown",
+    onProgress: opts.onProgress,
+  });
+  const html = renderBackupHtml(data);
+  mkdirSync(backupDir(), { recursive: true });
+  const messagesFile = resolve(backupDir(), messageBackupName(p.name));
+  writeFileSync(messagesFile, html);
+  const messagesBytes = Buffer.byteLength(html);
+  logger.info({ project: key, file: messagesFile, bytes: messagesBytes, channels: data.channels.length }, "Project message backup written");
 
   const snapshot = {
     project: p,
@@ -254,9 +279,9 @@ export async function dissolveProject(guild: Guild, key: string): Promise<string
   org.projects = org.projects.filter((pr) => pr.key !== key);
   persistOrg(org);
 
-  logger.info({ project: key, backup: file }, "Project dissolved");
+  logger.info({ project: key, backup: file, messages: messagesFile }, "Project dissolved");
   await refreshCommands();
-  return file;
+  return { backup: file, messagesFile, messagesBytes };
 }
 
 export async function restoreFromBackup(guild: Guild, backupFile: string): Promise<void> {

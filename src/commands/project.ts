@@ -18,6 +18,12 @@ import {
   restoreFromBackup,
 } from "../services/projectMgmt.js";
 import { assignLead } from "../services/leadership.js";
+import { BackupError } from "../services/messageBackup.js";
+import { logger } from "../core/logger.js";
+import { basename } from "node:path";
+
+/** Discord's upload limit for bot messages in DMs. */
+const DM_FILE_LIMIT = 10 * 1024 * 1024;
 
 export const PROJECT_WIZARD_ID = "project:wizard";
 
@@ -181,9 +187,36 @@ export const project: SlashCommand = {
         });
         return;
       }
-      await interaction.reply({ content: "Dissolving...", flags: MessageFlags.Ephemeral });
-      const backup = await dissolveProject(interaction.guild, key);
-      await interaction.editReply(`Dissolved. Backup: \`${backup}\``);
+      await interaction.reply({ content: "Backing up messages before dissolving…", flags: MessageFlags.Ephemeral });
+      // Discord drops edits after 15 min, so every edit is best effort and the
+      // result also goes out as a DM.
+      const edit = (content: string) => interaction.editReply(content).catch(() => undefined);
+      let lastEdit = 0;
+      let result;
+      try {
+        result = await dissolveProject(interaction.guild, key, {
+          actorTag: interaction.user.tag,
+          onProgress: (p) => {
+            if (Date.now() - lastEdit < 2000 && p.index < p.total) return;
+            lastEdit = Date.now();
+            void edit(`Backing up #${p.channel} (${p.index}/${p.total}), ${p.messages.toLocaleString("en-IN")} messages so far…`);
+          },
+        });
+      } catch (err) {
+        if (!(err instanceof BackupError)) throw err;
+        const text = `Dissolve of '${key}' stopped, nothing was deleted: ${err.message}`;
+        await edit(text);
+        await interaction.user.send(text).catch(() => undefined);
+        return;
+      }
+      const name = basename(result.messagesFile);
+      const size = (result.messagesBytes / (1024 * 1024)).toFixed(1);
+      const dm =
+        result.messagesBytes <= DM_FILE_LIMIT
+          ? interaction.user.send({ content: `Project '${key}' dissolved. Message backup attached (${size} MB).`, files: [{ attachment: result.messagesFile, name }] })
+          : interaction.user.send(`Project '${key}' dissolved. The message backup is ${size} MB, too big for a DM. Download it from the dashboard → Backups (\`${name}\`).`);
+      await dm.catch((err) => logger.warn({ err, project: key }, "Could not DM the message backup"));
+      await edit(`Dissolved. Message backup: \`${name}\` (${size} MB), sent to your DMs and listed on the dashboard → Backups.`);
       return;
     }
 
