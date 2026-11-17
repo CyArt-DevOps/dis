@@ -50,6 +50,7 @@ import { projectWizardHandler } from "./interactions/project.js";
 import { meetingPeopleSelectHandler } from "./interactions/meetingPeople.js";
 import { scheduleModalHandler } from "./interactions/schedule.js";
 import { connectDb, disconnectDb } from "./core/db.js";
+import { runShutdown } from "./core/shutdown.js";
 import { startDashboard, stopDashboard } from "./web/server.js";
 
 /**
@@ -146,28 +147,35 @@ async function main() {
     void ensureTenureAnnouncement(client).catch((err) => logger.warn({ err }, "Tenure announcement failed"));
   });
 
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info({ signal }, "Shutting down");
-    stopScheduler();
-    stopMonthlySummary();
-    stopOutbox();
-    stopTicketArchiveSweep();
-    stopWarningSweep();
-    stopHoursDigest();
-    stopScheduledMessages();
-    stopAttendanceSweep();
-    stopDashboard();
-    // Credit + close active voice sessions before the DB closes, so a deploy
-    // doesn't leave dangling sessions that accrue downtime on the next boot.
-    // Bounded: the host kills a process that doesn't stop promptly, and boot
-    // recovery closes whatever is left from the last checkpoint anyway.
-    await Promise.race([
-      closeAllOpenSessions().catch((err) => logger.error({ err }, "Failed closing voice sessions on shutdown")),
-      new Promise((r) => setTimeout(r, 15_000)),
-    ]);
-    await disconnectDb().catch(() => {});
-    client.destroy();
-    process.exit(0);
+    // Every step is bounded and a watchdog forces exit, well inside systemd's
+    // 120 s TimeoutStopSec. Credit + close active voice sessions before the DB
+    // closes so a deploy doesn't leave dangling sessions; anything left is
+    // recovered from the last checkpoint at boot (closeStaleSessionsOnBoot).
+    await runShutdown({
+      stopTimers: () => {
+        stopScheduler();
+        stopMonthlySummary();
+        stopOutbox();
+        stopTicketArchiveSweep();
+        stopWarningSweep();
+        stopHoursDigest();
+        stopScheduledMessages();
+        stopAttendanceSweep();
+        stopDashboard();
+      },
+      closeSessions: closeAllOpenSessions,
+      disconnect: disconnectDb,
+      destroyClient: () => client.destroy(),
+      exit: (code) => process.exit(code),
+      sessionsTimeoutMs: 15_000,
+      disconnectTimeoutMs: 5_000,
+      hardDeadlineMs: 30_000,
+    });
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
