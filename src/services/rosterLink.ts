@@ -28,6 +28,10 @@ export interface RosterResult {
   triesLeft?: number;
   /** "busy" only: when EMS calls resume (ISO). */
   retryAt?: string;
+}
+
+/** Bot-side display options (never part of an EMS reply). */
+export interface RosterMessageOpts {
   /** "busy" / "error": the command the user ran (default /link), named in the reply. */
   command?: string;
 }
@@ -76,7 +80,7 @@ export function credentialMessage(r: RosterResult): string {
     .join("\n");
 }
 
-export function rosterMessage(r: RosterResult): string {
+export function rosterMessage(r: RosterResult, opts: RosterMessageOpts = {}): string {
   switch (r.status) {
     case "credentials":
       return credentialMessage(r);
@@ -105,7 +109,7 @@ export function rosterMessage(r: RosterResult): string {
     case "busy": {
       const at = r.retryAt ? new Date(r.retryAt) : null;
       const when = at && !Number.isNaN(at.getTime()) ? ` after ${discordTimestamp(at, "t")} (${discordTimestamp(at, "R")})` : " in about 10 minutes";
-      return `The EMS portal is busy right now. Please run ${r.command ?? "/link"} again${when}. Trying earlier won't help.`;
+      return `The EMS portal is busy right now. Please run ${opts.command ?? "/link"} again${when}. Trying earlier won't help.`;
     }
     case "rate_limited":
       return "Too many tries. Please wait a while and try again.";
@@ -124,7 +128,7 @@ export function rosterMessage(r: RosterResult): string {
     case "email_mismatch":
       return `That email doesn't match the portal account linked to your Discord.${triesLeftText(r.triesLeft)}`;
     default:
-      return `${r.command === "/reset-password" ? "Password reset" : "Linking"} isn't available right now. Please try again later.`;
+      return `${opts.command === "/reset-password" ? "Password reset" : "Linking"} isn't available right now. Please try again later.`;
   }
 }
 

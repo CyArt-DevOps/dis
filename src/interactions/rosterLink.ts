@@ -10,6 +10,7 @@ import {
   claimRoster,
   rosterComponents,
   rosterMessage,
+  type RosterMessageOpts,
   verifyModal,
   verifyRoster,
   type RosterResult,
@@ -41,16 +42,17 @@ export function failureResult(err: unknown): RosterResult {
 }
 
 /** Shared by /link and the two modals: the reply is ephemeral (deferred with the Ephemeral flag). */
-export async function replyWith(i: { editReply(o: InteractionEditReplyOptions): Promise<unknown> }, r: RosterResult) {
-  await i.editReply({ content: rosterMessage(r), components: rosterComponents(r) });
+export async function replyWith(i: { editReply(o: InteractionEditReplyOptions): Promise<unknown> }, r: RosterResult, opts?: RosterMessageOpts) {
+  await i.editReply({ content: rosterMessage(r, opts), components: rosterComponents(r) });
 }
 
-async function submit(i: ModalSubmitInteraction, step: string, call: () => Promise<RosterResult>) {
+/** Run one EMS call for a modal submit and show its result; a failure is logged (step + status) and shown generically. */
+export async function submit(i: ModalSubmitInteraction, step: string, call: () => Promise<RosterResult>, opts?: RosterMessageOpts) {
   try {
-    await replyWith(i, await call());
+    await replyWith(i, await call(), opts);
   } catch (err) {
     logRosterFailure(step, i.user.id, err);
-    await replyWith(i, failureResult(err));
+    await replyWith(i, failureResult(err), opts);
   }
 }
 

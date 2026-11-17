@@ -65,6 +65,12 @@ describe("reset modal submit", () => {
     expect(emsPost).not.toHaveBeenCalled();
     expect(content(i)).toBe("That doesn't look like an email address. Run /reset-password again and type your portal email.");
   });
+  it("an email over 254 characters is refused locally with the validation message, without calling EMS", async () => {
+    const i = modal(`${"a".repeat(250)}@x.co`);
+    await handlerFor(i)!.handle(i as never);
+    expect(emsPost).not.toHaveBeenCalled();
+    expect(content(i)).toBe("That doesn't look like an email address. Run /reset-password again and type your portal email.");
+  });
   it("while EMS calls are paused it says when to run /reset-password again", async () => {
     emsPost.mockRejectedValue(new EmsCoolingDown(new Date("2026-11-16T08:30:00Z")));
     const i = modal("asha@example.test");

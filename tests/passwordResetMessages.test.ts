@@ -29,9 +29,13 @@ describe("rosterMessage for /reset-password", () => {
   });
   it("busy and the generic error name the command (default /link)", () => {
     expect(R.rosterMessage({ status: "busy" })).toMatch(/Please run \/link again in about 10 minutes/);
-    expect(R.rosterMessage({ status: "busy", command: "/reset-password" })).toMatch(/Please run \/reset-password again in about 10 minutes/);
+    expect(R.rosterMessage({ status: "busy" }, { command: "/reset-password" })).toMatch(/Please run \/reset-password again in about 10 minutes/);
     expect(R.rosterMessage({ status: "error" })).toBe("Linking isn't available right now. Please try again later.");
-    expect(R.rosterMessage({ status: "error", command: "/reset-password" })).toBe("Password reset isn't available right now. Please try again later.");
+    expect(R.rosterMessage({ status: "error" }, { command: "/reset-password" })).toBe("Password reset isn't available right now. Please try again later.");
+  });
+  it("an EMS reply cannot set the command: a command field in the result is ignored", () => {
+    expect(R.rosterMessage({ status: "busy", command: "/evil" } as never)).toMatch(/Please run \/link again/);
+    expect(R.rosterMessage({ status: "error", command: "/reset-password" } as never)).toBe("Linking isn't available right now. Please try again later.");
   });
   it("refusals carry no buttons", () => {
     for (const status of ["reset_limit", "reset_locked", "not_linked", "staff_account", "account_blocked", "email_mismatch"]) {
