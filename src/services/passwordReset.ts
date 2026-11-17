@@ -25,5 +25,7 @@ export function resetModal(): ModalBuilder {
 }
 
 export function resetPassword(discordId: string, email: string): Promise<RosterResult> {
-  return emsPost<RosterResult>("/password/reset", { discordId, email });
+  // 15s, not the 8s default: the api may wait up to 5s for its per-user lock, then hashes and commits. A reply lost
+  // after the commit would leave the intern with a changed password they never saw. The reply is already deferred.
+  return emsPost<RosterResult>("/password/reset", { discordId, email }, 15_000);
 }

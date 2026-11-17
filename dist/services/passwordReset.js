@@ -16,6 +16,8 @@ export function resetModal() {
         .setRequired(true).setMaxLength(254).setPlaceholder("The email you sign in to the portal with")));
 }
 export function resetPassword(discordId, email) {
-    return emsPost("/password/reset", { discordId, email });
+    // 15s, not the 8s default: the api may wait up to 5s for its per-user lock, then hashes and commits. A reply lost
+    // after the commit would leave the intern with a changed password they never saw. The reply is already deferred.
+    return emsPost("/password/reset", { discordId, email }, 15_000);
 }
 //# sourceMappingURL=passwordReset.js.map
