@@ -11,7 +11,7 @@ describe("resetPassword", () => {
   it("posts discordId + email to /password/reset and returns the EMS reply", async () => {
     emsPost.mockResolvedValue({ status: "reset_limit" });
     expect(await P.resetPassword("100000000000000001", "asha@example.test")).toEqual({ status: "reset_limit" });
-    expect(emsPost.mock.calls).toEqual([["/password/reset", { discordId: "100000000000000001", email: "asha@example.test" }]]);
+    expect(emsPost.mock.calls).toEqual([["/password/reset", { discordId: "100000000000000001", email: "asha@example.test" }, 15_000]]);
   });
 });
 

@@ -38,7 +38,7 @@ describe("reset modal submit", () => {
     emsPost.mockResolvedValue({ status: "credentials", email: "asha@example.test", password: "Xk7#abcdEF2q", portalUrl: "https://ems.cyart.io", expiresHours: 48, reset: true });
     const i = modal("  asha@example.test  ");
     await handlerFor(i)!.handle(i as never);
-    expect(emsPost).toHaveBeenCalledWith("/password/reset", { discordId: USER, email: "asha@example.test" });
+    expect(emsPost).toHaveBeenCalledWith("/password/reset", { discordId: USER, email: "asha@example.test" }, 15_000);
     expect(content(i)).toMatch(/^Your portal password was reset\. You have been signed out everywhere\./);
     expect(content(i)).toContain("`Xk7#abcdEF2q`");
     expect(warn).not.toHaveBeenCalled();
