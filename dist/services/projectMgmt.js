@@ -7,10 +7,14 @@ import { prisma } from "../core/db.js";
 import { channelNames, moduleShort, podRepRoleNames, roleNames } from "../lib/names.js";
 import { bootstrapServer } from "./bootstrap.js";
 import { syncGuildCommands } from "./commandSync.js";
-import { normProject } from "./integrationPayloads.js";
-import { collectProjectMessages } from "./messageBackup.js";
+import { normProject, projectKeyOf } from "./integrationPayloads.js";
+import { BackupError, collectProjectMessages } from "./messageBackup.js";
 import { backupDir, messageBackupName } from "./messageBackupFiles.js";
 import { renderBackupHtml } from "../lib/backupHtml.js";
+import { pickProjectMembers } from "../lib/projectMembers.js";
+import { isStaff } from "../lib/rbac.js";
+import { enqueueEventStrict } from "./emsOutbox.js";
+import { integrationEnabled } from "./emsClient.js";
 /** Choice lists in slash commands are baked at registration — refresh them. */
 async function refreshCommands() {
     await syncGuildCommands().catch((err) => logger.warn({ err }, "Slash command re-sync failed — run `npm run register` manually"));
@@ -172,7 +176,52 @@ export async function archiveProject(guild, key) {
     logger.info({ project: key }, "Project archived");
     await refreshCommands();
 }
+async function notifyEms(data) {
+    if (!integrationEnabled())
+        return "off";
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            await enqueueEventStrict("project.dissolved", data);
+            return "queued";
+        }
+        catch (err) {
+            logger.error({ err, project: data.key, attempt }, "Could not queue project.dissolved for EMS");
+            await new Promise((r) => setTimeout(r, attempt * 500));
+        }
+    }
+    return "failed";
+}
+function safeWriteBackup(name, data) {
+    try {
+        return writeBackup(name, data);
+    }
+    catch (err) {
+        logger.error({ err, name }, "Could not write dissolve backup file");
+        return null;
+    }
+}
+function safeWriteFile(file, data) {
+    try {
+        writeFileSync(file, JSON.stringify(data, null, 2));
+    }
+    catch (err) {
+        logger.error({ err, file }, "Could not update dissolve backup file");
+    }
+}
+/** One dissolve per project at a time: a second click would double-kick and double-notify. */
+const dissolving = new Set();
 export async function dissolveProject(guild, key, opts = {}) {
+    if (dissolving.has(key))
+        throw new BackupError(`Project '${key}' is already being dissolved.`);
+    dissolving.add(key);
+    try {
+        return await runDissolve(guild, key, opts);
+    }
+    finally {
+        dissolving.delete(key);
+    }
+}
+async function runDissolve(guild, key, opts) {
     const p = org.projects.find((pr) => pr.key === key);
     if (!p)
         throw new Error(`Project '${key}' not found`);
@@ -189,6 +238,74 @@ export async function dissolveProject(guild, key, opts = {}) {
     const messagesFile = resolve(backupDir(), messageBackupName(p.name));
     writeFileSync(messagesFile, html);
     const messagesBytes = Buffer.byteLength(html);
+    // Members: decided before anything is deleted (roles are how we find them).
+    const others = org.projects.filter((pr) => pr.key !== key);
+    const otherRoles = new Set(others.flatMap((pr) => roleNamesOf(pr)));
+    let dbIds;
+    let all;
+    try {
+        const dbRows = await prisma.member.findMany({
+            where: { guildId: guild.id, project: { not: null } },
+            select: { id: true, project: true },
+        });
+        // Resolve each row against every project, so a member of "Alpha" is never taken for "Alpha Labs".
+        dbIds = new Set(dbRows.filter((r) => projectKeyOf(r.project, org.projects) === p.key).map((r) => r.id));
+        all = await guild.members.fetch();
+    }
+    catch (err) {
+        throw new BackupError(`Could not load the member list: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const pick = pickProjectMembers([...all.values()].map((gm) => ({
+        id: gm.id,
+        tag: gm.user.tag,
+        bot: gm.user.bot,
+        staff: isStaff(gm),
+        roleNames: [...gm.roles.cache.values()].map((r) => r.name),
+        gm,
+    })), roleSet, otherRoles, dbIds);
+    // The plan goes on disk before the first kick, so a crash mid-way still leaves a record of who was meant to go.
+    const membersRecord = {
+        project: { key: p.key, name: p.name },
+        planned: pick.remove.map((x) => ({ id: x.id, tag: x.tag })),
+        skipped: pick.skipped,
+        kicked: [],
+        kickFailed: [],
+        ems: "pending",
+        at: new Date().toISOString(),
+    };
+    const membersFile = safeWriteBackup(`dissolve-members-${key}`, membersRecord);
+    const kicked = [];
+    const kickedIds = [];
+    const kickFailed = [];
+    const reason = `Project ${p.name} dissolved`;
+    for (const [i, x] of pick.remove.entries()) {
+        try {
+            await x.gm.kick(reason);
+            kicked.push(x.tag);
+            kickedIds.push(x.id);
+            membersRecord.kicked.push({ id: x.id, tag: x.tag });
+        }
+        catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            kickFailed.push({ tag: x.tag, error });
+            membersRecord.kickFailed.push({ id: x.id, tag: x.tag, error });
+        }
+        opts.onKickProgress?.(i + 1, pick.remove.length);
+    }
+    // Only people who really left: someone whose kick failed keeps both Discord and EMS access.
+    if (kickedIds.length) {
+        await prisma.member
+            .updateMany({
+            where: { guildId: guild.id, id: { in: kickedIds } },
+            data: { status: "former", formerAt: new Date(), formerReason: reason, project: null, module: null, pod: null },
+        })
+            .catch((err) => logger.error({ err, project: key }, "Could not mark kicked members former"));
+    }
+    const ems = await notifyEms({ key: p.key, name: p.name, memberIds: kickedIds, dissolvedAt: new Date().toISOString() });
+    membersRecord.ems = ems;
+    if (membersFile)
+        safeWriteFile(membersFile, membersRecord);
+    logger.info({ project: key, kicked: kicked.length, skipped: pick.skipped.length, failed: kickFailed.length, ems }, "Project members removed");
     logger.info({ project: key, file: messagesFile, bytes: messagesBytes, channels: data.channels.length }, "Project message backup written");
     const snapshot = {
         project: p,
@@ -200,7 +317,8 @@ export async function dissolveProject(guild, key, opts = {}) {
             .map((c) => ({ id: c.id, name: c.name })),
         at: new Date().toISOString(),
     };
-    const file = writeBackup(`dissolve-${key}`, snapshot);
+    // Members are already gone: a failed snapshot write must not stop the clean-up.
+    const file = safeWriteBackup(`dissolve-${key}`, snapshot) ?? "(settings backup could not be written)";
     // Collect first, children before categories: deleting a category while
     // iterating orphans its children (parent becomes null) and they get skipped.
     const targets = [...guild.channels.cache.values()].filter((c) => {
@@ -218,7 +336,16 @@ export async function dissolveProject(guild, key, opts = {}) {
     persistOrg(org);
     logger.info({ project: key, backup: file, messages: messagesFile }, "Project dissolved");
     await refreshCommands();
-    return { backup: file, messagesFile, messagesBytes, imageFailures: data.imageFailures ?? 0 };
+    return {
+        backup: file,
+        messagesFile,
+        messagesBytes,
+        imageFailures: data.imageFailures ?? 0,
+        kicked,
+        skipped: pick.skipped,
+        kickFailed,
+        ems,
+    };
 }
 export async function restoreFromBackup(guild, backupFile) {
     if (!existsSync(backupFile))
