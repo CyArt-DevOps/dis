@@ -25,8 +25,10 @@ const updateMany = vi.fn(async () => {
   return { count: 0 };
 });
 vi.mock("../src/core/db.js", () => ({ prisma: { member: { findMany, updateMany } } }));
-const enqueueEvent = vi.fn(async (type: string) => void order.push(`event:${type}`));
-vi.mock("../src/services/emsOutbox.js", () => ({ enqueueEvent }));
+const enqueueEventStrict = vi.fn(async (type: string) => void order.push(`event:${type}`));
+vi.mock("../src/services/emsOutbox.js", () => ({ enqueueEventStrict }));
+let integrationOn = true;
+vi.mock("../src/services/emsClient.js", () => ({ integrationEnabled: () => integrationOn }));
 const collect = vi.fn();
 vi.mock("../src/services/messageBackup.js", async (orig) => ({
   ...(await orig<typeof import("../src/services/messageBackup.js")>()),
@@ -80,7 +82,9 @@ beforeEach(() => {
   order.length = 0;
   collect.mockReset();
   writeFileSync.mockClear();
-  enqueueEvent.mockClear();
+  enqueueEventStrict.mockReset();
+  enqueueEventStrict.mockImplementation(async (type: string) => void order.push(`event:${type}`));
+  integrationOn = true;
   updateMany.mockClear();
   org.projects = baseProjects();
   members = [
@@ -119,27 +123,61 @@ describe("dissolveProject", () => {
     expect(progress).toHaveBeenLastCalledWith(4, 4);
   });
 
-  it("tells EMS who leaves before the first kick, and marks them former in the DB", async () => {
-    await dissolveProject(guild(), "alpha", {});
-    expect(enqueueEvent).toHaveBeenCalledWith(
-      "project.dissolved",
-      expect.objectContaining({ key: "alpha", name: "Alpha", memberIds: expect.arrayContaining(["i1", "tl", "db1", "bad"]) })
-    );
+  it("tells EMS only about members really kicked, after the kicks, and marks only them former", async () => {
+    const res = await dissolveProject(guild(), "alpha", {});
+    expect(res.ems).toBe("queued");
+    expect(enqueueEventStrict).toHaveBeenCalledTimes(1);
+    const data = enqueueEventStrict.mock.calls[0]![1] as { key: string; memberIds: string[] };
+    expect(data.key).toBe("alpha");
+    expect([...data.memberIds].sort()).toEqual(["db1", "i1", "tl"]);
     const ev = order.indexOf("event:project.dissolved");
-    const firstKick = order.findIndex((s) => s.startsWith("kick:"));
-    expect(ev).toBeLessThan(firstKick);
+    const lastKick = order.map((s) => s.startsWith("kick:")).lastIndexOf(true);
+    expect(ev).toBeGreaterThan(lastKick);
     expect(order.indexOf("db:former")).toBeLessThan(order.findIndex((s) => s.startsWith("delete:")));
-    expect(updateMany).toHaveBeenCalledWith({
-      where: { guildId: "g1", id: { in: expect.arrayContaining(["i1", "tl", "db1", "bad"]) } },
-      data: expect.objectContaining({ status: "former", project: null, module: null, pod: null, formerReason: "Project Alpha dissolved" }),
-    });
+    const upd = updateMany.mock.calls[0]![0] as unknown as { where: { id: { in: string[] } }; data: Record<string, unknown> };
+    expect([...upd.where.id.in].sort()).toEqual(["db1", "i1", "tl"]);
+    expect(upd.data).toMatchObject({ status: "former", project: null, module: null, pod: null, formerReason: "Project Alpha dissolved" });
+    // the plan was written to disk before the first kick
+    const plan = order.findIndex((s) => /^write:dissolve-members-alpha-/.test(s));
+    expect(plan).toBeGreaterThanOrEqual(0);
+    expect(plan).toBeLessThan(order.findIndex((s) => s.startsWith("kick:")));
+  });
+
+  it("reports EMS off or failed instead of silently losing the event", async () => {
+    integrationOn = false;
+    expect((await dissolveProject(guild(), "alpha", {})).ems).toBe("off");
+    expect(enqueueEventStrict).not.toHaveBeenCalled();
+    integrationOn = true;
+    org.projects = baseProjects();
+    enqueueEventStrict.mockRejectedValue(new Error("db down"));
+    expect((await dissolveProject(guild(), "alpha", {})).ems).toBe("failed");
+    expect(enqueueEventStrict).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops before anything is deleted when the member list cannot be loaded", async () => {
+    const g = guild() as unknown as { members: { fetch: () => Promise<never> } };
+    g.members.fetch = async () => {
+      throw new Error("timeout");
+    };
+    await expect(dissolveProject(g as never, "alpha", {})).rejects.toThrow(BackupError);
+    expect(order.filter((s) => s.startsWith("delete:") || s.startsWith("kick:"))).toEqual([]);
+    expect(org.projects).toHaveLength(2);
+  });
+
+  it("refuses a second dissolve of the same project while one runs", async () => {
+    let release!: () => void;
+    collect.mockImplementationOnce(() => new Promise((r) => (release = () => r({ project: "Alpha", dissolvedAt: "", dissolvedBy: "", channels: [], authors: {} }))));
+    const first = dissolveProject(guild(), "alpha", {});
+    await expect(dissolveProject(guild(), "alpha", {})).rejects.toThrow(/already being dissolved/);
+    release();
+    await first;
   });
 
   it("does nothing at all when the backup fails", async () => {
     collect.mockRejectedValue(new BackupError("Cannot read #secret"));
     await expect(dissolveProject(guild(), "alpha", {})).rejects.toThrow("Cannot read #secret");
     expect(order).toEqual([]);
-    expect(enqueueEvent).not.toHaveBeenCalled();
+    expect(enqueueEventStrict).not.toHaveBeenCalled();
     expect(org.projects).toHaveLength(2);
   });
 });

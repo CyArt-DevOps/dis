@@ -238,10 +238,16 @@ export const project: SlashCommand = {
       const size = (result.messagesBytes / (1024 * 1024)).toFixed(1);
       const lost = result.imageFailures ? ` ${result.imageFailures} image(s) could not be downloaded and are listed by name only.` : "";
       const people = memberSummary(result.kicked, result.skipped, result.kickFailed);
+      const emsLine =
+        result.ems === "queued"
+          ? " EMS will archive the project for 4 months and block the kicked interns' logins."
+          : result.ems === "off"
+            ? " EMS integration is off, so EMS was not updated."
+            : " Could not notify EMS: archive the project and block the interns there by hand (list in the dissolve-members backup file).";
       const dmSent =
         result.messagesBytes <= DM_FILE_LIMIT
-          ? interaction.user.send({ content: clip(`Project '${key}' dissolved. Message backup attached (${size} MB).${lost}\n${people}`), files: [{ attachment: result.messagesFile, name }] })
-          : interaction.user.send(clip(`Project '${key}' dissolved. The message backup is ${size} MB, too big for a DM. Download it from the dashboard → Backups (\`${name}\`).${lost}\n${people}`));
+          ? interaction.user.send({ content: clip(`Project '${key}' dissolved. Message backup attached (${size} MB).${lost}\n${people}${emsLine}`), files: [{ attachment: result.messagesFile, name }] })
+          : interaction.user.send(clip(`Project '${key}' dissolved. The message backup is ${size} MB, too big for a DM. Download it from the dashboard → Backups (\`${name}\`).${lost}\n${people}${emsLine}`));
       const dmOk = await dmSent.then(
         () => true,
         (err) => {
@@ -250,7 +256,7 @@ export const project: SlashCommand = {
         }
       );
       const where = dmOk ? "Sent to your DMs and listed" : "Could not DM you (DMs closed?). It is listed";
-      await edit(clip(`Dissolved. Message backup: \`${name}\` (${size} MB). ${where} on the dashboard → Backups.${lost}\n${people}`));
+      await edit(clip(`Dissolved. Message backup: \`${name}\` (${size} MB). ${where} on the dashboard → Backups.${lost}\n${people}${emsLine}`));
       return;
     }
 

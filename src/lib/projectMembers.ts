@@ -42,7 +42,8 @@ export function pickProjectMembers<M extends MemberLike>(
     const skip = (reason: SkippedMember["reason"]) => skipped.push({ id: m.id, tag: m.tag, reason });
     if (m.bot) skip("bot");
     else if (m.staff) skip("staff");
-    else if (m.roleNames.some((r) => otherProjectRoles.has(r) && !projectRoles.has(r))) skip("other project");
+    // A role name another project also uses counts too: when in doubt, nobody is kicked.
+    else if (m.roleNames.some((r) => otherProjectRoles.has(r))) skip("other project");
     else remove.push(m);
   }
   return { remove, skipped };

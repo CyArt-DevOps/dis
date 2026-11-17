@@ -50,8 +50,9 @@ describe("pickProjectMembers", () => {
     ]);
   });
 
-  it("does not treat a role shared by name with this project as another project's", () => {
+  it("skips a member whose role name another project also uses (when in doubt, no kick)", () => {
     const r = pickProjectMembers([m("11", ["Alpha"])], projectRoles, new Set(["Alpha"]), new Set());
-    expect(r.remove.map((x) => x.id)).toEqual(["11"]);
+    expect(r.remove).toEqual([]);
+    expect(r.skipped).toEqual([{ id: "11", tag: "user11", reason: "other project" }]);
   });
 });

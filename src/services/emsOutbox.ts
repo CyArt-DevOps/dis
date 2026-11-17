@@ -49,6 +49,16 @@ export async function enqueueEvent(type: string, data: unknown): Promise<void> {
   }
 }
 
+/**
+ * Like enqueueEvent, but a failed insert throws, for events whose loss matters
+ * (project.dissolved). The caller checks integrationEnabled() first.
+ */
+export async function enqueueEventStrict(type: string, data: unknown): Promise<void> {
+  await prisma.outboundEvent.create({
+    data: { eventId: randomUUID(), type, payload: JSON.stringify({ data, occurredAt: new Date().toISOString() }) },
+  });
+}
+
 export async function flushOutbox(): Promise<void> {
   await pruneDelivered();
   const due = await prisma.outboundEvent.findMany({
