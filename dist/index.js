@@ -27,6 +27,7 @@ import { warmMemberCache } from "./services/memberCache.js";
 import { verificationHandlers } from "./interactions/verification.js";
 import { emsLinkHandlers } from "./interactions/emsLink.js";
 import { rosterLinkHandlers } from "./interactions/rosterLink.js";
+import { passwordResetHandlers } from "./interactions/passwordReset.js";
 import { ticketHandlers } from "./interactions/tickets.js";
 import { startTicketArchiveSweep, stopTicketArchiveSweep } from "./services/tickets.js";
 import { startScheduledMessages, stopScheduledMessages, } from "./services/scheduledMessages.js";
@@ -71,6 +72,8 @@ async function main() {
     for (const h of emsLinkHandlers)
         registry.registerHandler(h);
     for (const h of rosterLinkHandlers)
+        registry.registerHandler(h);
+    for (const h of passwordResetHandlers)
         registry.registerHandler(h);
     for (const h of ticketHandlers)
         registry.registerHandler(h);

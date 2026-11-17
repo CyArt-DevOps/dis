@@ -40,7 +40,7 @@ export const TENURE_DESCRIPTION = [
     "**If the bot asks for more information**",
     "• **\"Verify my details\"**: Enter the email address and phone number you gave in the intern form.",
     "• **\"Not on the intern roster\"**: If you did submit the form, select **\"I filled the form\"**. HR will review your request and contact you on Discord.",
-    "• **\"Already linked\"**, or you have forgotten your password: Please contact HR.",
+    "• **\"Already linked\"**, or you have forgotten your password: Interns, type **`/reset-password`** in the CyArt Discord server. Staff, please contact HR.",
     "• **\"Too many tries\"**: Please wait a while before trying again.",
     "",
     "As we begin this new chapter, we're counting on your cooperation in making EMS part of your daily routine. If you have any questions, please contact HR.",

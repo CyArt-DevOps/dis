@@ -24,16 +24,17 @@ export function failureResult(err) {
     return err instanceof EmsCoolingDown ? { status: "busy", retryAt: err.retryAt.toISOString() } : { status: "error" };
 }
 /** Shared by /link and the two modals: the reply is ephemeral (deferred with the Ephemeral flag). */
-export async function replyWith(i, r) {
-    await i.editReply({ content: rosterMessage(r), components: rosterComponents(r) });
+export async function replyWith(i, r, opts) {
+    await i.editReply({ content: rosterMessage(r, opts), components: rosterComponents(r) });
 }
-async function submit(i, step, call) {
+/** Run one EMS call for a modal submit and show its result; a failure is logged (step + status) and shown generically. */
+export async function submit(i, step, call, opts) {
     try {
-        await replyWith(i, await call());
+        await replyWith(i, await call(), opts);
     }
     catch (err) {
         logRosterFailure(step, i.user.id, err);
-        await replyWith(i, failureResult(err));
+        await replyWith(i, failureResult(err), opts);
     }
 }
 const verifyButton = {

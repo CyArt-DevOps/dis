@@ -123,17 +123,25 @@ export const claimHandler = {
     async handle(i) {
         if (!i.isButton() || !i.inCachedGuild())
             return;
-        const staff = await i.guild.members.fetch(i.user.id);
+        // i.member comes with the interaction — no API round trip. Anything slow
+        // (DB lookup, permission edits) runs only after the defer, so the 3s
+        // window can't be missed.
+        const staff = i.member;
         if (!isStaff(staff)) {
             await i.reply({ content: "Staff only.", flags: MessageFlags.Ephemeral });
             return;
         }
-        const id = await ticketIdFor(i);
-        // claimTicket edits channel permissions (Discord API) — defer the public
-        // reply first so it can't exceed the 3s window.
         await i.deferReply();
-        await claimTicket(i.guild, id, staff);
-        await i.editReply({ content: `Claimed by <@${staff.id}>.` });
+        try {
+            const id = await ticketIdFor(i);
+            await claimTicket(i.guild, id, staff);
+            await i.editReply({ content: `Claimed by <@${staff.id}>.` });
+        }
+        catch (err) {
+            await i.editReply({
+                content: `Failed: ${err instanceof Error ? err.message : "unknown error"}`,
+            });
+        }
     },
 };
 export const closeHandler = {
@@ -142,10 +150,10 @@ export const closeHandler = {
     async handle(i) {
         if (!i.isButton() || !i.inCachedGuild())
             return;
-        const member = await i.guild.members.fetch(i.user.id);
-        const id = await ticketIdFor(i);
+        const member = i.member;
         await i.reply({ content: "Closing ticket..." });
         try {
+            const id = await ticketIdFor(i);
             await closeTicket(i.guild, id, member);
         }
         catch (err) {
@@ -162,8 +170,7 @@ export const reopenHandler = {
     async handle(i) {
         if (!i.isButton() || !i.inCachedGuild())
             return;
-        const member = await i.guild.members.fetch(i.user.id);
-        const id = await ticketIdFor(i);
+        const member = i.member;
         const channel = i.channel;
         if (!channel || channel.type !== ChannelType.GuildText) {
             await i.reply({ content: "Invalid channel.", flags: MessageFlags.Ephemeral });
@@ -175,6 +182,7 @@ export const reopenHandler = {
         }
         await i.reply({ content: "Reopening ticket..." });
         try {
+            const id = await ticketIdFor(i);
             await reopenTicket(i.guild, id, member);
         }
         catch (err) {
@@ -191,25 +199,25 @@ export const vcGrantHandler = {
     async handle(i) {
         if (!i.isButton() || !i.inCachedGuild())
             return;
-        const staff = await i.guild.members.fetch(i.user.id);
+        const staff = i.member;
         if (!isStaff(staff)) {
             await i.reply({ content: "Staff only.", flags: MessageFlags.Ephemeral });
             return;
         }
-        const id = await ticketIdFor(i);
-        const ticket = await prisma.ticket.findUnique({ where: { id } });
-        if (!ticket) {
-            await i.reply({ content: "Ticket not found.", flags: MessageFlags.Ephemeral });
-            return;
-        }
-        const office = ticketTypeToOffice(ticket.type);
-        if (!office) {
-            await i.reply({ content: "This ticket type has no office VC.", flags: MessageFlags.Ephemeral });
-            return;
-        }
-        // grantVoiceAccess hits the Discord API — defer the public reply first.
+        // DB lookups and grantVoiceAccess are slow — defer before any of them.
         await i.deferReply();
         try {
+            const id = await ticketIdFor(i);
+            const ticket = await prisma.ticket.findUnique({ where: { id } });
+            if (!ticket) {
+                await i.editReply({ content: "Ticket not found." });
+                return;
+            }
+            const office = ticketTypeToOffice(ticket.type);
+            if (!office) {
+                await i.editReply({ content: "This ticket type has no office VC." });
+                return;
+            }
             const res = await grantVoiceAccess(i.guild, ticket.openerId, office, 30, staff.id);
             await i.editReply({
                 content: `Granted <@${ticket.openerId}> access to **${res.channelName}** until <t:${Math.floor(res.expiresAt.getTime() / 1000)}:t>.`,
