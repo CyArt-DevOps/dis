@@ -30,9 +30,12 @@ export function renderMarkdown(raw: string): string {
   );
   text = esc(text);
   text = text.replace(/`([^`\n]+)`/g, (_m, code: string) => hold(`<code>${code}</code>`));
-  text = text.replace(/https?:\/\/[^\s<]+/g, (url) =>
-    hold(`<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`)
-  );
+  text = text.replace(/https?:\/\/[^\s<]+/g, (match) => {
+    // `<url>` (escaped to &lt;url&gt;) and trailing markdown/punctuation stay outside the link.
+    const tail = /(?:&gt;|[*_~|.,!?)])+$/.exec(match)?.[0] ?? "";
+    const url = match.slice(0, match.length - tail.length);
+    return hold(`<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`) + tail;
+  });
   text = text
     .replace(/\*\*([^\n]+?)\*\*/g, "<strong>$1</strong>")
     .replace(/__([^\n]+?)__/g, "<u>$1</u>")
@@ -283,7 +286,8 @@ export function renderBackupHtml(data: BackupData): string {
 <body>
 <aside class="side"><div class="side-head"><div class="proj">${project}</div>
 <div class="meta">Message backup · dissolved ${esc(fullTime(data.dissolvedAt))} IST by ${esc(data.dissolvedBy)}</div>
-<div class="meta">${plural(data.channels.length, "channel")} · ${plural(total, "message")}</div></div>
+<div class="meta">${plural(data.channels.length, "channel")} · ${plural(total, "message")}</div>
+${data.imageFailures ? `<div class="meta">${plural(data.imageFailures, "image")} could not be downloaded (shown by name)</div>` : ""}</div>
 ${sidebarHtml(data)}
 </aside>
 <main>

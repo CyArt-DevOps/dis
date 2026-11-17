@@ -211,12 +211,20 @@ export const project: SlashCommand = {
       }
       const name = basename(result.messagesFile);
       const size = (result.messagesBytes / (1024 * 1024)).toFixed(1);
-      const dm =
+      const lost = result.imageFailures ? ` ${result.imageFailures} image(s) could not be downloaded and are listed by name only.` : "";
+      const dmSent =
         result.messagesBytes <= DM_FILE_LIMIT
-          ? interaction.user.send({ content: `Project '${key}' dissolved. Message backup attached (${size} MB).`, files: [{ attachment: result.messagesFile, name }] })
-          : interaction.user.send(`Project '${key}' dissolved. The message backup is ${size} MB, too big for a DM. Download it from the dashboard → Backups (\`${name}\`).`);
-      await dm.catch((err) => logger.warn({ err, project: key }, "Could not DM the message backup"));
-      await edit(`Dissolved. Message backup: \`${name}\` (${size} MB), sent to your DMs and listed on the dashboard → Backups.`);
+          ? interaction.user.send({ content: `Project '${key}' dissolved. Message backup attached (${size} MB).${lost}`, files: [{ attachment: result.messagesFile, name }] })
+          : interaction.user.send(`Project '${key}' dissolved. The message backup is ${size} MB, too big for a DM. Download it from the dashboard → Backups (\`${name}\`).${lost}`);
+      const dmOk = await dmSent.then(
+        () => true,
+        (err) => {
+          logger.warn({ err, project: key }, "Could not DM the message backup");
+          return false;
+        }
+      );
+      const where = dmOk ? "Sent to your DMs and listed" : "Could not DM you (DMs closed?). It is listed";
+      await edit(`Dissolved. Message backup: \`${name}\` (${size} MB). ${where} on the dashboard → Backups.${lost}`);
       return;
     }
 

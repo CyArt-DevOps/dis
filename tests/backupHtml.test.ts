@@ -174,3 +174,16 @@ describe("renderBackupHtml", () => {
     expect(html).toContain("No messages in this channel.");
   });
 });
+
+describe("review fixes", () => {
+  it("keeps trailing markdown and <url> brackets out of links", () => {
+    expect(renderMarkdown("**https://x.com/a**")).toContain('<strong><a href="https://x.com/a" target="_blank" rel="noopener noreferrer">https://x.com/a</a></strong>');
+    expect(renderMarkdown("<https://x.com/b>")).toContain('href="https://x.com/b"');
+    expect(renderMarkdown("see https://x.com/c.")).toContain('href="https://x.com/c"');
+  });
+
+  it("notes image download failures in the header", () => {
+    const html = renderBackupHtml({ ...data([msg()]), imageFailures: 2 });
+    expect(html).toContain("2 images could not be downloaded");
+  });
+});

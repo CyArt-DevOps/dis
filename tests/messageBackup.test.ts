@@ -172,6 +172,45 @@ describe("collectProjectMessages", () => {
     ]);
   });
 
+  it("skips SVG, caps nothing small, counts failed images, reads polls and forwards", async () => {
+    const m = fakeMsg({
+      content: "",
+      attachments: [
+        { name: "x.svg", size: 10, contentType: "image/svg+xml", url: "https://cdn.test/x.svg" },
+        { name: "lost.png", size: 10, contentType: "image/png; charset=binary", url: "https://cdn.test/fail.png" },
+      ],
+    });
+    Object.assign(m, {
+      poll: { question: { text: "Lunch?" }, answers: new Map([["1", { text: "Yes", voteCount: 2 }]]) },
+      messageSnapshots: new Map([["s", { content: "forwarded text", attachments: new Map() }]]),
+    });
+    const data = await run([category("1", "CyBreach M1"), fakeChannel({ id: "10", name: "g", parentId: "1", msgs: [m] })]);
+    const got = data.channels[0]!.messages[0]!;
+    expect(got.attachments[0]).toEqual({ name: "x.svg", size: 10 });
+    expect(got.attachments[1]!.note).toBe("image could not be saved");
+    expect(data.imageFailures).toBe(1);
+    expect(got.content).toContain("Poll: Lunch?");
+    expect(got.content).toContain("- Yes (2 votes)");
+    expect(got.content).toContain("Forwarded: forwarded text");
+  });
+
+  it("needs Manage Threads on text channels for private archived threads", async () => {
+    const ch = fakeChannel({ id: "10", name: "g", parentId: "1" });
+    ch.permissionsFor = () => ({ has: (p: unknown) => !(typeof p === "bigint") }) as never;
+    await expect(run([category("1", "CyBreach M1"), ch])).rejects.toThrow(/Manage Threads/);
+  });
+
+  it("stops listing archived threads when a page brings nothing new", async () => {
+    const t = fakeChannel({ id: "30", name: "old", type: ChannelType.PublicThread, msgs: [] });
+    Object.assign(t, { archivedAt: new Date("2026-11-01T00:00:00Z") });
+    const parent = fakeChannel({ id: "10", name: "g", parentId: "1" });
+    parent.threads.fetchArchived = vi.fn(async () => ({ threads: new Map([["30", t]]), hasMore: true }));
+    const data = await run([category("1", "CyBreach M1"), parent]);
+    expect(data.channels.map((c) => c.name)).toEqual(["g", "old"]);
+    // public twice at most (second page has nothing new), private same
+    expect((parent.threads.fetchArchived as ReturnType<typeof vi.fn>).mock.calls.length).toBeLessThanOrEqual(4);
+  });
+
   it("throws BackupError when a channel cannot be read", async () => {
     await expect(
       run([category("1", "CyBreach M1"), fakeChannel({ id: "10", name: "secret", parentId: "1", readable: false })])

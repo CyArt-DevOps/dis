@@ -226,6 +226,8 @@ export interface DissolveResult {
   /** Discord-style HTML with every message. */
   messagesFile: string;
   messagesBytes: number;
+  /** Images that could not be downloaded (kept as name + size only). */
+  imageFailures: number;
 }
 
 export async function dissolveProject(guild: Guild, key: string, opts: DissolveOptions = {}): Promise<DissolveResult> {
@@ -281,7 +283,7 @@ export async function dissolveProject(guild: Guild, key: string, opts: DissolveO
 
   logger.info({ project: key, backup: file, messages: messagesFile }, "Project dissolved");
   await refreshCommands();
-  return { backup: file, messagesFile, messagesBytes };
+  return { backup: file, messagesFile, messagesBytes, imageFailures: data.imageFailures ?? 0 };
 }
 
 export async function restoreFromBackup(guild: Guild, backupFile: string): Promise<void> {

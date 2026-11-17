@@ -59,4 +59,6 @@ export interface BackupData {
   dissolvedBy: string;
   channels: BackupChannel[];
   authors: Record<string, BackupAuthor>;
+  /** Images that could not be downloaded after retries (shown by name only). */
+  imageFailures?: number;
 }
