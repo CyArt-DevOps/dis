@@ -16,6 +16,7 @@ import { assign } from "./assign.js";
 import { leave } from "./leave.js";
 import { schedule } from "./schedule.js";
 import { link } from "./link.js";
+import { resetPasswordCommand } from "./resetPassword.js";
 
 export function registerAllCommands(): void {
   registry.registerCommand(ping);
@@ -34,5 +35,6 @@ export function registerAllCommands(): void {
   registry.registerCommand(leave);
   registry.registerCommand(schedule);
   registry.registerCommand(link);
+  registry.registerCommand(resetPasswordCommand);
   for (const cmd of moderationCommands) registry.registerCommand(cmd);
 }
