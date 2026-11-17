@@ -25,6 +25,26 @@ import { basename } from "node:path";
 /** Discord's upload limit for bot messages in DMs. */
 const DM_FILE_LIMIT = 10 * 1024 * 1024;
 
+/** Discord messages are capped at 2000 characters. */
+export function clip(text: string, max = 1990): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+const listOf = (items: string[], max = 20) =>
+  items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} and ${items.length - max} more`;
+
+/** "Kicked 12 members. Skipped 2: a (staff), b (other project). Failed 1: c." */
+export function memberSummary(
+  kicked: string[],
+  skipped: { tag: string; reason: string }[],
+  failed: { tag: string; error: string }[]
+): string {
+  const parts = [`Kicked ${kicked.length} member${kicked.length === 1 ? "" : "s"}.`];
+  if (skipped.length) parts.push(`Skipped ${skipped.length}: ${listOf(skipped.map((s) => `${s.tag} (${s.reason})`))}.`);
+  if (failed.length) parts.push(`Could not kick ${failed.length}: ${listOf(failed.map((f) => f.tag))}.`);
+  return parts.join(" ");
+}
+
 export const PROJECT_WIZARD_ID = "project:wizard";
 
 export function projectWizardModal(): ModalBuilder {
@@ -97,12 +117,12 @@ export const project: SlashCommand = {
     .addSubcommand((sc) =>
       sc
         .setName("dissolve")
-        .setDescription("Backup + delete a project (DESTRUCTIVE)")
+        .setDescription("Backup, delete channels/roles and KICK all members (DESTRUCTIVE)")
         .addStringOption((o) =>
           o.setName("project").setDescription("Project").setRequired(true).addChoices(...projectChoices())
         )
         .addStringOption((o) =>
-          o.setName("confirm").setDescription("Type the project key to confirm").setRequired(true)
+          o.setName("confirm").setDescription("Type the project key. Members of the project will be KICKED.").setRequired(true)
         )
     )
     .addSubcommand((sc) =>
@@ -201,6 +221,11 @@ export const project: SlashCommand = {
             lastEdit = Date.now();
             void edit(`Backing up #${p.channel} (${p.index}/${p.total}), ${p.messages.toLocaleString("en-IN")} messages so far…`);
           },
+          onKickProgress: (done, total) => {
+            if (Date.now() - lastEdit < 2000 && done < total) return;
+            lastEdit = Date.now();
+            void edit(`Removing members (${done}/${total})…`);
+          },
         });
       } catch (err) {
         if (!(err instanceof BackupError)) throw err;
@@ -212,10 +237,11 @@ export const project: SlashCommand = {
       const name = basename(result.messagesFile);
       const size = (result.messagesBytes / (1024 * 1024)).toFixed(1);
       const lost = result.imageFailures ? ` ${result.imageFailures} image(s) could not be downloaded and are listed by name only.` : "";
+      const people = memberSummary(result.kicked, result.skipped, result.kickFailed);
       const dmSent =
         result.messagesBytes <= DM_FILE_LIMIT
-          ? interaction.user.send({ content: `Project '${key}' dissolved. Message backup attached (${size} MB).${lost}`, files: [{ attachment: result.messagesFile, name }] })
-          : interaction.user.send(`Project '${key}' dissolved. The message backup is ${size} MB, too big for a DM. Download it from the dashboard → Backups (\`${name}\`).${lost}`);
+          ? interaction.user.send({ content: clip(`Project '${key}' dissolved. Message backup attached (${size} MB).${lost}\n${people}`), files: [{ attachment: result.messagesFile, name }] })
+          : interaction.user.send(clip(`Project '${key}' dissolved. The message backup is ${size} MB, too big for a DM. Download it from the dashboard → Backups (\`${name}\`).${lost}\n${people}`));
       const dmOk = await dmSent.then(
         () => true,
         (err) => {
@@ -224,7 +250,7 @@ export const project: SlashCommand = {
         }
       );
       const where = dmOk ? "Sent to your DMs and listed" : "Could not DM you (DMs closed?). It is listed";
-      await edit(`Dissolved. Message backup: \`${name}\` (${size} MB). ${where} on the dashboard → Backups.${lost}`);
+      await edit(clip(`Dissolved. Message backup: \`${name}\` (${size} MB). ${where} on the dashboard → Backups.${lost}\n${people}`));
       return;
     }
 

@@ -16,6 +16,9 @@ import { normProject } from "./integrationPayloads.js";
 import { collectProjectMessages, type BackupProgress } from "./messageBackup.js";
 import { backupDir, messageBackupName } from "./messageBackupFiles.js";
 import { renderBackupHtml } from "../lib/backupHtml.js";
+import { pickProjectMembers, type SkippedMember } from "../lib/projectMembers.js";
+import { isStaff } from "../lib/rbac.js";
+import { enqueueEvent } from "./emsOutbox.js";
 
 /** Choice lists in slash commands are baked at registration — refresh them. */
 async function refreshCommands(): Promise<void> {
@@ -218,6 +221,7 @@ export async function archiveProject(guild: Guild, key: string): Promise<void> {
 export interface DissolveOptions {
   actorTag?: string;
   onProgress?: (p: BackupProgress) => void;
+  onKickProgress?: (done: number, total: number) => void;
 }
 
 export interface DissolveResult {
@@ -228,6 +232,10 @@ export interface DissolveResult {
   messagesBytes: number;
   /** Images that could not be downloaded (kept as name + size only). */
   imageFailures: number;
+  /** Tags of members kicked from the server. */
+  kicked: string[];
+  skipped: SkippedMember[];
+  kickFailed: { tag: string; error: string }[];
 }
 
 export async function dissolveProject(guild: Guild, key: string, opts: DissolveOptions = {}): Promise<DissolveResult> {
@@ -248,6 +256,59 @@ export async function dissolveProject(guild: Guild, key: string, opts: DissolveO
   const messagesFile = resolve(backupDir(), messageBackupName(p.name));
   writeFileSync(messagesFile, html);
   const messagesBytes = Buffer.byteLength(html);
+
+  // Members: decided before anything is deleted (roles are how we find them).
+  const others = org.projects.filter((pr) => pr.key !== key);
+  const otherRoles = new Set(others.flatMap((pr) => roleNamesOf(pr)));
+  const names = new Set([normProject(p.key), normProject(p.name)]);
+  const dbRows = await prisma.member.findMany({
+    where: { guildId: guild.id, project: { not: null } },
+    select: { id: true, project: true },
+  });
+  const dbIds = new Set(dbRows.filter((r) => r.project !== null && names.has(normProject(r.project))).map((r) => r.id));
+  const all = await guild.members.fetch();
+  const pick = pickProjectMembers(
+    [...all.values()].map((gm) => ({
+      id: gm.id,
+      tag: gm.user.tag,
+      bot: gm.user.bot,
+      staff: isStaff(gm),
+      roleNames: [...gm.roles.cache.values()].map((r) => r.name),
+      gm,
+    })),
+    roleSet,
+    otherRoles,
+    dbIds
+  );
+
+  // EMS first, so it still learns who was in the project even if a kick fails half way.
+  await enqueueEvent("project.dissolved", {
+    key: p.key,
+    name: p.name,
+    memberIds: pick.remove.map((x) => x.id),
+    dissolvedAt: new Date().toISOString(),
+  });
+
+  const kicked: string[] = [];
+  const kickFailed: { tag: string; error: string }[] = [];
+  const reason = `Project ${p.name} dissolved`;
+  for (const [i, x] of pick.remove.entries()) {
+    try {
+      await x.gm.kick(reason);
+      kicked.push(x.tag);
+    } catch (err) {
+      kickFailed.push({ tag: x.tag, error: err instanceof Error ? err.message : String(err) });
+    }
+    opts.onKickProgress?.(i + 1, pick.remove.length);
+  }
+  const removedIds = pick.remove.map((x) => x.id);
+  if (removedIds.length) {
+    await prisma.member.updateMany({
+      where: { guildId: guild.id, id: { in: removedIds } },
+      data: { status: "former", formerAt: new Date(), formerReason: reason, project: null, module: null, pod: null },
+    });
+  }
+  logger.info({ project: key, kicked: kicked.length, skipped: pick.skipped.length, failed: kickFailed.length }, "Project members removed");
   logger.info({ project: key, file: messagesFile, bytes: messagesBytes, channels: data.channels.length }, "Project message backup written");
 
   const snapshot = {
@@ -283,7 +344,15 @@ export async function dissolveProject(guild: Guild, key: string, opts: DissolveO
 
   logger.info({ project: key, backup: file, messages: messagesFile }, "Project dissolved");
   await refreshCommands();
-  return { backup: file, messagesFile, messagesBytes, imageFailures: data.imageFailures ?? 0 };
+  return {
+    backup: file,
+    messagesFile,
+    messagesBytes,
+    imageFailures: data.imageFailures ?? 0,
+    kicked,
+    skipped: pick.skipped,
+    kickFailed,
+  };
 }
 
 export async function restoreFromBackup(guild: Guild, backupFile: string): Promise<void> {
