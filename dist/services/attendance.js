@@ -229,18 +229,20 @@ export async function reconcileVoiceSessions(client) {
  * counted as presence and at most one flush interval is lost.
  */
 export async function closeStaleSessionsOnBoot() {
-    const open = await prisma.voiceSession.findMany({ where: { leftAt: null } });
-    if (open.length === 0)
-        return 0;
-    for (const s of open) {
-        const end = s.creditedUpTo ?? s.joinedAt;
-        await prisma.voiceSession.update({
-            where: { id: s.id },
-            data: { leftAt: end, seconds: s.seconds ?? 0 },
-        });
+    // One statement: a row-by-row update was ~1 s per session over the remote
+    // database, so a daytime restart with ~280 sessions left open blocked login
+    // for 5-7 minutes. Same result per row: leftAt = checkpoint (or joinedAt if
+    // never checkpointed), seconds unchanged (0 if never credited).
+    const count = await prisma.$executeRaw `
+    UPDATE \`VoiceSession\`
+    SET \`leftAt\` = COALESCE(\`creditedUpTo\`, \`joinedAt\`),
+        \`seconds\` = COALESCE(\`seconds\`, 0)
+    WHERE \`leftAt\` IS NULL
+  `;
+    if (count > 0) {
+        logger.warn({ count }, "Closed stale voice sessions at last checkpoint (crash recovery)");
     }
-    logger.warn({ count: open.length }, "Closed stale voice sessions at last checkpoint (crash recovery)");
-    return open.length;
+    return count;
 }
 /**
  * On graceful shutdown, close all open sessions crediting their real elapsed

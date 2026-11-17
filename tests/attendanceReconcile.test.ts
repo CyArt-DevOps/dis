@@ -12,7 +12,7 @@ vi.mock("../src/core/db.js", () => ({
   prisma: { voiceSession: { findMany, update, updateMany, create }, member: { upsert }, $executeRaw: executeRaw },
 }));
 
-const { reconcileVoiceSessions } = await import("../src/services/attendance.js");
+const { reconcileVoiceSessions, closeStaleSessionsOnBoot } = await import("../src/services/attendance.js");
 
 function clientWith(channelId: string) {
   const vs = { id: "u1", channelId, member: { user: { bot: false } } };
@@ -57,5 +57,25 @@ describe("reconcileVoiceSessions: missed channel move", () => {
     expect(await reconcileVoiceSessions(clientWith("same"))).toEqual({ opened: 0, closed: 0 });
     expect(update).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("closeStaleSessionsOnBoot", () => {
+  it("closes every open session in ONE statement at its checkpoint (no per-row round trips)", async () => {
+    executeRaw.mockResolvedValue(275);
+    expect(await closeStaleSessionsOnBoot()).toBe(275);
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+    const sql = (executeRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
+    expect(sql).toMatch(/UPDATE\s+`VoiceSession`/);
+    expect(sql).toMatch(/`leftAt`\s*=\s*COALESCE\(`creditedUpTo`,\s*`joinedAt`\)/);
+    expect(sql).toMatch(/`seconds`\s*=\s*COALESCE\(`seconds`,\s*0\)/);
+    expect(sql).toMatch(/WHERE\s+`leftAt`\s+IS\s+NULL/);
+    expect(findMany).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("returns 0 when nothing was open", async () => {
+    executeRaw.mockResolvedValue(0);
+    expect(await closeStaleSessionsOnBoot()).toBe(0);
   });
 });
