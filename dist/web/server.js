@@ -13,6 +13,7 @@ import { WarningError, createManualWarning, addWarningNote, dismissWarning, memb
 import { clearCalendarCache } from "../services/calendar.js";
 import { buildMemberReport, reportPeriod, trackedFromOf } from "../services/reportPdf.js";
 import { listTenure } from "../services/tenure.js";
+import { listMessageBackups, resolveMessageBackup } from "../services/messageBackupFiles.js";
 import { HrAuthError, activeHrNames, changeOwnPassword, hrName, requireHr, verifyHr } from "../services/hrUsers.js";
 import { clearInsightsCache } from "../services/insights.js";
 import { prisma } from "../core/db.js";
@@ -239,6 +240,19 @@ app.post("/api/hr/password", jsonBody, sameOrigin, action(async (req) => {
 }));
 // ----- Tenure Completed: holds email and phone, so even the list needs an HR token.
 app.post("/api/tenure/list", jsonBody, sameOrigin, requireHr, action((req) => listTenure(guildOf(req))));
+// ----- Dissolved-project message backups: everyone's messages, so HR token only.
+app.post("/api/backups/list", jsonBody, sameOrigin, requireHr, action(async () => listMessageBackups()));
+app.post("/api/backups/download", jsonBody, sameOrigin, requireHr, (req, res) => {
+    const file = String(req.body?.file ?? "");
+    const path = resolveMessageBackup(file);
+    if (!path) {
+        res.status(404).json({ error: "Backup not found." });
+        return;
+    }
+    logger.info({ file, hr: hrName(req) }, "Message backup downloaded");
+    res.setHeader("Cache-Control", "no-store");
+    res.download(path, file);
+});
 // ----- Public holidays
 app.get("/api/holidays", async (req, res) => {
     res.json(await listHolidays(guildOf(req)));
