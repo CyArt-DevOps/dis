@@ -22,7 +22,7 @@ export function usePath(): string {
 }
 
 export interface Route {
-  name: "overview" | "members" | "calendar" | "meetings" | "meeting" | "profile" | "warnings" | "holidays" | "tenure";
+  name: "overview" | "members" | "calendar" | "meetings" | "meeting" | "profile" | "warnings" | "holidays" | "tenure" | "backups";
   userId?: string;
   meetingId?: number;
 }
@@ -38,5 +38,6 @@ export function parseRoute(path: string): Route {
   if (path.startsWith("/warnings")) return { name: "warnings" };
   if (path.startsWith("/holidays")) return { name: "holidays" };
   if (path.startsWith("/tenure")) return { name: "tenure" };
+  if (path.startsWith("/backups")) return { name: "backups" };
   return { name: "overview" };
 }
