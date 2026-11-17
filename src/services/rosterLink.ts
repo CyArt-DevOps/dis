@@ -21,11 +21,15 @@ export interface RosterResult {
   portalUrl?: string;
   expiresHours?: number;
   reissued?: boolean;
+  /** /reset-password success (EMS spec 2026-11-17 §4 step 7). */
+  reset?: boolean;
   maskedEmail?: string;
   mainUsername?: string | null;
   triesLeft?: number;
   /** "busy" only: when EMS calls resume (ISO). */
   retryAt?: string;
+  /** "busy" / "error": the command the user ran (default /link), named in the reply. */
+  command?: string;
 }
 
 export const ROSTER_IDS = {
@@ -50,9 +54,20 @@ export function claimRoster(discordId: string, name: string, email: string, phon
 const DISCORD_TAKEN = "Your Discord account is already linked to a different portal profile. Open an HR ticket to change it.";
 const masked = (r: RosterResult) => (r.maskedEmail ? escapeMarkdown(r.maskedEmail) : "your email");
 
+/** " 2 tries left today." / " 1 try left today." / " No tries left today. …" / "" when EMS sent no count. */
+function triesLeftText(n: number | undefined): string {
+  if (typeof n !== "number") return "";
+  if (n <= 0) return " No tries left today. Try again in 24 hours or open an HR ticket.";
+  return ` ${n} ${n === 1 ? "try" : "tries"} left today.`;
+}
+
 export function credentialMessage(r: RosterResult): string {
   return [
-    r.reissued ? "A new temporary password replaces your old one." : null,
+    r.reset
+      ? "Your portal password was reset. You have been signed out everywhere."
+      : r.reissued
+        ? "A new temporary password replaces your old one."
+        : null,
     "**Your CyArt portal login**",
     `Portal: ${r.portalUrl ?? "https://ems.cyart.io"} · Email: \`${r.email ?? ""}\` · Temporary password: \`${r.password ?? ""}\``,
     `Sign in with it once and set your own password. It expires in ${r.expiresHours ?? 48} hours. Don't share it.`,
@@ -66,9 +81,9 @@ export function rosterMessage(r: RosterResult): string {
     case "credentials":
       return credentialMessage(r);
     case "already_linked":
-      return `Your Discord account is already linked to the portal as **${masked(r)}**. Forgot your password? Contact HR.`;
+      return `Your Discord account is already linked to the portal as **${masked(r)}**. Forgot your password? Run /reset-password.`;
     case "linked_existing":
-      return `Linked! Your Discord account is now connected to your portal account (**${masked(r)}**). Sign in with your own password; forgot it? Contact HR.`;
+      return `Linked! Your Discord account is now connected to your portal account (**${masked(r)}**). Sign in with your own password; forgot it? Run /reset-password.`;
     case "existing_account":
       return "A portal account already uses your form email. Please contact HR to link it.";
     case "alt_account":
@@ -90,14 +105,26 @@ export function rosterMessage(r: RosterResult): string {
     case "busy": {
       const at = r.retryAt ? new Date(r.retryAt) : null;
       const when = at && !Number.isNaN(at.getTime()) ? ` after ${discordTimestamp(at, "t")} (${discordTimestamp(at, "R")})` : " in about 10 minutes";
-      return `The EMS portal is busy right now. Please run /link again${when}. Trying earlier won't help.`;
+      return `The EMS portal is busy right now. Please run ${r.command ?? "/link"} again${when}. Trying earlier won't help.`;
     }
     case "rate_limited":
       return "Too many tries. Please wait a while and try again.";
     case "discord_taken":
       return DISCORD_TAKEN;
+    case "reset_limit":
+      return "You've reset your password twice in the last 24 hours. Try again tomorrow or open an HR ticket.";
+    case "reset_locked":
+      return "Too many wrong emails. Try again in 24 hours or open an HR ticket.";
+    case "not_linked":
+      return "Your Discord isn't linked to a portal account yet. Run /link first.";
+    case "staff_account":
+      return "Staff accounts are reset by HR or the Super Admin. Open an HR ticket.";
+    case "account_blocked":
+      return "This portal account is deactivated. Contact HR.";
+    case "email_mismatch":
+      return `That email doesn't match the portal account linked to your Discord.${triesLeftText(r.triesLeft)}`;
     default:
-      return "Linking isn't available right now. Please try again later.";
+      return `${r.command === "/reset-password" ? "Password reset" : "Linking"} isn't available right now. Please try again later.`;
   }
 }
 
