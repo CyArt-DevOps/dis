@@ -6,10 +6,12 @@ const findMany = vi.fn();
 const update = vi.fn();
 const updateMany = vi.fn();
 const create = vi.fn();
+const createMany = vi.fn();
+const memberCreateMany = vi.fn();
 const upsert = vi.fn();
 const executeRaw = vi.fn();
 vi.mock("../src/core/db.js", () => ({
-  prisma: { voiceSession: { findMany, update, updateMany, create }, member: { upsert }, $executeRaw: executeRaw },
+  prisma: { voiceSession: { findMany, update, updateMany, create, createMany }, member: { upsert, createMany: memberCreateMany }, $executeRaw: executeRaw },
 }));
 
 const { reconcileVoiceSessions, closeStaleSessionsOnBoot } = await import("../src/services/attendance.js");
@@ -22,11 +24,13 @@ function clientWith(channelId: string) {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-03-10T10:00:00Z"));
-  for (const m of [findMany, update, updateMany, create, upsert, executeRaw]) m.mockReset();
+  for (const m of [findMany, update, updateMany, create, createMany, memberCreateMany, upsert, executeRaw]) m.mockReset();
   upsert.mockResolvedValue({});
   update.mockResolvedValue({});
   updateMany.mockResolvedValue({ count: 1 });
   create.mockResolvedValue({});
+  createMany.mockResolvedValue({ count: 1 });
+  memberCreateMany.mockResolvedValue({ count: 0 });
   executeRaw.mockResolvedValue(1);
 });
 
@@ -46,7 +50,8 @@ describe("reconcileVoiceSessions: missed channel move", () => {
     expect(update.mock.calls.some(([a]) => "channelId" in a.data)).toBe(false);
 
     // new session starts at now in the actual channel
-    expect(create).toHaveBeenCalledWith({ data: { guildId: "g1", userId: "u1", channelId: "new", joinedAt: now } });
+    expect(memberCreateMany).toHaveBeenCalledWith({ data: [{ id: "u1", guildId: "g1" }], skipDuplicates: true });
+    expect(createMany).toHaveBeenCalledWith({ data: [{ guildId: "g1", userId: "u1", channelId: "new", joinedAt: now }] });
     expect(res).toEqual({ opened: 1, closed: 1 });
   });
 
@@ -56,7 +61,22 @@ describe("reconcileVoiceSessions: missed channel move", () => {
     ]);
     expect(await reconcileVoiceSessions(clientWith("same"))).toEqual({ opened: 0, closed: 0 });
     expect(update).not.toHaveBeenCalled();
+    expect(createMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("reconcileVoiceSessions: boot with a full server", () => {
+  it("opens every untracked member in bulk, not one round trip each", async () => {
+    findMany.mockResolvedValue([]);
+    const states = new Map(
+      Array.from({ length: 250 }, (_, i) => ["u" + i, { id: "u" + i, channelId: "c1", member: { user: { bot: false } } }])
+    );
+    const client = { guilds: { cache: new Map([["g1", { id: "g1", voiceStates: { cache: states } }]]) } } as never;
+    expect(await reconcileVoiceSessions(client)).toEqual({ opened: 250, closed: 0 });
+    expect(createMany).toHaveBeenCalledTimes(2); // 200 + 50
+    expect(memberCreateMany).toHaveBeenCalledTimes(2);
     expect(create).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled();
   });
 });
 

@@ -105,7 +105,12 @@ async function main() {
     });
     client.once(Events.ClientReady, () => {
         setBotClient(client);
-        void reopenActiveSessions(client).then(() => startAttendanceSweep(client));
+        // Start the sweep even if the reopen fails: with .then() alone one DB error
+        // here meant no attendance checkpoint for the whole life of the process.
+        // The sweep reconciles every minute, so it opens anyone missed here.
+        void reopenActiveSessions(client)
+            .catch((err) => logger.error({ err }, "Reopening voice sessions on boot failed; the sweep will retry"))
+            .finally(() => startAttendanceSweep(client));
         startWarningSweep(client);
         startHoursDigest(client);
         // Private "Check my hours" panel in each project's #general, and push the

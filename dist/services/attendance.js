@@ -268,14 +268,21 @@ export async function reconcileVoiceSessions(client) {
         }
         tracked.add(key);
     }
-    for (const [key, l] of live) {
-        if (tracked.has(key))
-            continue;
-        await ensureMember(l.guildId, l.userId);
-        await prisma.voiceSession.create({
-            data: { guildId: l.guildId, userId: l.userId, channelId: l.channelId, joinedAt: now },
+    // In bulk: after a daytime restart 100-300 people are in voice and none are
+    // tracked. One member upsert + one create each took ~1.6 s per person over
+    // the remote database, so the attendance sweep (started after this) did not
+    // run for 5-15 minutes and that time was never credited.
+    const toOpen = [...live].filter(([key]) => !tracked.has(key)).map(([, l]) => l);
+    for (let i = 0; i < toOpen.length; i += INSERT_CHUNK) {
+        const chunk = toOpen.slice(i, i + INSERT_CHUNK);
+        await prisma.member.createMany({
+            data: chunk.map((l) => ({ id: l.userId, guildId: l.guildId })),
+            skipDuplicates: true,
         });
-        opened++;
+        await prisma.voiceSession.createMany({
+            data: chunk.map((l) => ({ guildId: l.guildId, userId: l.userId, channelId: l.channelId, joinedAt: now })),
+        });
+        opened += chunk.length;
     }
     if (opened || closed)
         logger.info({ opened, closed }, "Reconciled voice sessions");
