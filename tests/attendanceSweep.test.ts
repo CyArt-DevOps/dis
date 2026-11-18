@@ -187,7 +187,7 @@ describe("runAttendanceSweep", () => {
     vi.setSystemTime(at(60));
     await flushOpenSessions();
     expect(credited).toBe(18000);
-    expect(maxInFlight).toBeLessThanOrEqual(4);
+    expect(maxInFlight).toBeLessThanOrEqual(8);
     expect(bulkCalls).toBe(2); // 300 rows / 200 per INSERT
   });
 });

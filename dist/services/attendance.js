@@ -18,7 +18,7 @@ const WRITE_BATCH = 25;
  * Sessions claimed concurrently by the every-minute flush. Kept well under the
  * connection pool so interactions always find a free connection.
  */
-const FLUSH_CONCURRENCY = 4;
+const FLUSH_CONCURRENCY = 8;
 /** Rows per multi-row Attendance INSERT. */
 const INSERT_CHUNK = 200;
 let flushTimer = null;
