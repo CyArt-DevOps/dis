@@ -17,6 +17,7 @@ interface Row {
 // database does, which is what lets concurrent sweeps interleave.
 let rows: Row[] = [];
 let credited = 0;
+let bulkCalls = 0;
 let inFlight = 0;
 let maxInFlight = 0;
 const tick = async () => {
@@ -59,10 +60,17 @@ vi.mock("../src/core/db.js", () => ({
   prisma: {
     voiceSession,
     member: { upsert: vi.fn(async () => ({})) },
-    // Tagged template: (strings, guildId, userId, day, seconds, ...).
-    $executeRaw: vi.fn(async (_s: TemplateStringsArray, _g: string, _u: string, _d: string, seconds: number) => {
+    // Tagged template. Single row: (strings, guildId, userId, day, seconds, ...).
+    // Bulk: (strings, Prisma.join(rows), cap) — values flatten to [g, u, d, s]*.
+    $executeRaw: vi.fn(async (_s: TemplateStringsArray, ...args: unknown[]) => {
       await tick();
-      credited += seconds;
+      const first = args[0] as { values?: unknown[] } | string;
+      if (typeof first === "object" && first && Array.isArray(first.values)) {
+        bulkCalls++;
+        for (let i = 3; i < first.values.length; i += 4) credited += first.values[i] as number;
+      } else {
+        credited += args[3] as number;
+      }
       return 1;
     }),
   },
@@ -103,6 +111,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   rows = [];
   credited = 0;
+  bulkCalls = 0;
   inFlight = 0;
   maxInFlight = 0;
 });
@@ -171,5 +180,14 @@ describe("runAttendanceSweep", () => {
     await flushOpenSessions();
     expect(credited).toBe(3000);
     expect(maxInFlight).toBeGreaterThan(1);
+  });
+
+  it("leaves most of the connection pool free and writes Attendance in bulk", async () => {
+    rows = Array.from({ length: 300 }, (_, i) => session(i + 1));
+    vi.setSystemTime(at(60));
+    await flushOpenSessions();
+    expect(credited).toBe(18000);
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+    expect(bulkCalls).toBe(2); // 300 rows / 200 per INSERT
   });
 });

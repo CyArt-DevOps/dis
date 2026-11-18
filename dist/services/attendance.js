@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../core/db.js";
 import { logger } from "../core/logger.js";
 import { shiftDayKey, splitByTzDay, tzDateKey } from "../lib/time.js";
@@ -11,8 +12,15 @@ const DAY_SECONDS = 24 * HOUR;
 export const MAX_SESSION_SECONDS = 12 * HOUR;
 /** How often open sessions are checkpointed into Attendance and reconciled. */
 export const FLUSH_INTERVAL_MS = 60_000;
-/** Sessions written concurrently by the flush sweep and the shutdown close. */
+/** Sessions closed concurrently by the shutdown close (one-off, speed matters). */
 const WRITE_BATCH = 25;
+/**
+ * Sessions claimed concurrently by the every-minute flush. Kept well under the
+ * connection pool so interactions always find a free connection.
+ */
+const FLUSH_CONCURRENCY = 4;
+/** Rows per multi-row Attendance INSERT. */
+const INSERT_CHUNK = 200;
 let flushTimer = null;
 let sweeping = false;
 /** Day bucket (YYYY-MM-DD) in the ORG timezone, not UTC. */
@@ -60,12 +68,23 @@ async function addDailySeconds(guildId, userId, day, seconds) {
  * minute under-credited, never hours over.
  */
 async function creditSession(s, upTo) {
+    const buckets = await claimSession(s, upTo);
+    for (const b of buckets)
+        await addDailySeconds(s.guildId, s.userId, b.day, b.seconds);
+    return buckets.reduce((sum, b) => sum + b.seconds, 0);
+}
+/**
+ * The claim half of creditSession: advance the mark and return the day buckets
+ * now owed to Attendance (empty if another writer got there first or nothing is
+ * owed). The caller MUST add them; the flush sweep adds all of them in bulk.
+ */
+async function claimSession(s, upTo) {
     let row = s;
     // Two tries: a lost claim re-reads once, so a close still credits its tail.
     for (let attempt = 0; attempt < 2; attempt++) {
         const from = row.creditedUpTo ?? row.joinedAt;
         if (upTo.getTime() <= from.getTime())
-            return 0;
+            return [];
         const already = row.seconds ?? 0;
         const remaining = Math.max(0, MAX_SESSION_SECONDS - already);
         const rawSeconds = Math.round((upTo.getTime() - from.getTime()) / 1000);
@@ -78,17 +97,47 @@ async function creditSession(s, upTo) {
             where: { id: row.id, creditedUpTo: row.creditedUpTo, leftAt: null },
             data: { creditedUpTo: upTo, seconds: already + credited },
         });
-        if (claim.count === 1) {
-            for (const b of buckets)
-                await addDailySeconds(row.guildId, row.userId, b.day, b.seconds);
-            return credited;
-        }
+        if (claim.count === 1)
+            return buckets.filter((b) => b.seconds > 0);
         const fresh = await prisma.voiceSession.findUnique({ where: { id: row.id } });
         if (!fresh || fresh.leftAt)
-            return 0;
+            return [];
         row = fresh;
     }
-    return 0;
+    return [];
+}
+/**
+ * Add many (member, day) amounts in multi-row statements: same per-row effect
+ * as addDailySeconds (24h ceiling via LEAST), a handful of round trips instead
+ * of one per open session per minute.
+ */
+async function addDailySecondsBulk(items) {
+    // One row per (member, day): a duplicate key inside one INSERT would still
+    // sum correctly, but merging keeps the statement small.
+    const merged = new Map();
+    for (const it of items) {
+        if (it.seconds <= 0)
+            continue;
+        const key = `${it.guildId}|${it.userId}|${it.day}`;
+        const prev = merged.get(key);
+        if (prev)
+            prev.seconds += it.seconds;
+        else
+            merged.set(key, { ...it });
+    }
+    const rows = [...merged.values()];
+    for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+        const values = rows
+            .slice(i, i + INSERT_CHUNK)
+            .map((r) => Prisma.sql `(${r.guildId}, ${r.userId}, ${r.day}, ${Math.min(r.seconds, DAY_SECONDS)})`);
+        // VALUES(col) is the row's own inserted value (already capped above). The
+        // new total is capped again, so the 24h ceiling holds exactly as before.
+        await prisma.$executeRaw `
+      INSERT INTO \`Attendance\` (\`guildId\`, \`userId\`, \`day\`, \`seconds\`)
+      VALUES ${Prisma.join(values)}
+      ON DUPLICATE KEY UPDATE \`seconds\` = LEAST(\`seconds\` + VALUES(\`seconds\`), ${DAY_SECONDS})
+    `;
+    }
 }
 /** Credit up to `endTime` and mark the session closed. */
 async function closeSession(s, endTime) {
@@ -146,19 +195,29 @@ export async function flushOpenSessions() {
         return 0;
     const now = new Date();
     let credited = 0;
-    // In parallel batches: one at a time, 300+ people in voice took longer than
-    // the sweep interval over the remote database.
-    for (let i = 0; i < open.length; i += WRITE_BATCH) {
-        await Promise.all(open.slice(i, i + WRITE_BATCH).map(async (s) => {
+    const owed = [];
+    // Claims run a few at a time, not 25: this sweep runs every minute with
+    // 300+ people in voice, and 25 parallel writes took the whole connection
+    // pool, so ticket buttons and slash commands timed out waiting for one.
+    for (let i = 0; i < open.length; i += FLUSH_CONCURRENCY) {
+        await Promise.all(open.slice(i, i + FLUSH_CONCURRENCY).map(async (s) => {
             try {
-                if ((await creditSession(s, now)) > 0)
+                const buckets = await claimSession(s, now);
+                if (buckets.length > 0)
                     credited++;
+                for (const b of buckets)
+                    owed.push({ guildId: s.guildId, userId: s.userId, ...b });
             }
             catch (err) {
                 logger.warn({ err, session: s.id }, "Could not checkpoint voice session");
             }
         }));
     }
+    // Marks are already claimed, so these seconds belong to us alone. A failure
+    // here loses this minute (same as a crash between claim and add), never
+    // double-credits.
+    if (owed.length > 0)
+        await addDailySecondsBulk(owed);
     return credited;
 }
 /**

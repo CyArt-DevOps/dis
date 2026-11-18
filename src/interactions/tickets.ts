@@ -28,6 +28,17 @@ function cid(i: Interaction): string | undefined {
 }
 
 /**
+ * A short, public-safe reason. Prisma errors are long and expose query details,
+ * and nearly always mean the database was busy or unreachable for a moment.
+ */
+export function errorText(err: unknown): string {
+  if (!(err instanceof Error)) return "unknown error. Please try again.";
+  if (err.name.startsWith("PrismaClient") || /prisma/i.test(err.message))
+    return "the database is busy right now. Please try again in a minute.";
+  return err.message;
+}
+
+/**
  * The ticket a button belongs to. Looked up by channel first: the id baked into
  * the custom id goes stale if tickets are ever renumbered, the channel does not.
  */
@@ -137,7 +148,7 @@ export const modalHandler: InteractionHandler = {
       await i.editReply(`Ticket created: <#${channelId}>`);
     } catch (err) {
       await i.editReply(
-        `Failed: ${err instanceof Error ? err.message : "unknown error"}`
+        `Failed: ${errorText(err)}`
       );
     }
   },
@@ -164,7 +175,7 @@ export const claimHandler: InteractionHandler = {
       await i.editReply({ content: `Claimed by <@${staff.id}>.` });
     } catch (err) {
       await i.editReply({
-        content: `Failed: ${err instanceof Error ? err.message : "unknown error"}`,
+        content: `Failed: ${errorText(err)}`,
       });
     }
   },
@@ -182,10 +193,11 @@ export const closeHandler: InteractionHandler = {
       const id = await ticketIdFor(i);
       await closeTicket(i.guild, id, member);
     } catch (err) {
-      await i.followUp({
-        content: `Failed: ${err instanceof Error ? err.message : "unknown error"}`,
-        flags: MessageFlags.Ephemeral,
-      });
+      // Replace the public "Closing ticket..." line: an error only the clicker
+      // could see left the channel looking like the bot ignored the button.
+      await i
+        .editReply({ content: `Could not close the ticket: ${errorText(err)}` })
+        .catch(() => {});
     }
   },
 };
@@ -211,10 +223,9 @@ export const reopenHandler: InteractionHandler = {
       const id = await ticketIdFor(i);
       await reopenTicket(i.guild, id, member);
     } catch (err) {
-      await i.followUp({
-        content: `Failed: ${err instanceof Error ? err.message : "unknown error"}`,
-        flags: MessageFlags.Ephemeral,
-      });
+      await i
+        .editReply({ content: `Could not reopen the ticket: ${errorText(err)}` })
+        .catch(() => {});
     }
   },
 };
@@ -250,7 +261,7 @@ export const vcGrantHandler: InteractionHandler = {
       });
     } catch (err) {
       await i.editReply({
-        content: `Failed: ${err instanceof Error ? err.message : "unknown"}`,
+        content: `Failed: ${errorText(err)}`,
       });
     }
   },
