@@ -259,6 +259,8 @@ export async function createLeaveRequest(member, type, startAt, endAt, reason, h
     ];
     let channelId = null;
     try {
+        // Build the card first: if it were invalid, no empty channel is left behind.
+        const embed = leaveTicketEmbed(row.id, member.id, title, startAt, endAt, reason, half);
         const channel = await member.guild.channels.create({
             name: `leave-${row.id}`,
             type: ChannelType.GuildText,
@@ -268,13 +270,15 @@ export async function createLeaveRequest(member, type, startAt, endAt, reason, h
         });
         channelId = channel.id;
         await prisma.leaveRequest.update({ where: { id: row.id }, data: { channelId } });
-        const embed = leaveTicketEmbed(row.id, member.id, title, startAt, endAt, reason, half);
         const buttons = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`${LEAVE_IDS.approve}:${row.id}`).setLabel("Approve").setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`${LEAVE_IDS.reject}:${row.id}`).setLabel("Reject").setStyle(ButtonStyle.Danger));
         const doc = requiredDocument(type, startAt, endAt);
         const hrMention = staffRoleIds(member.guild)
             .map((id) => `<@&${id}>`)
             .join(" ");
         await channel.send({ content: `<@${member.id}> ${hrMention}`, embeds: [embed], components: [buttons] });
+        for (const part of fullReasonMessages(reason)) {
+            await channel.send({ content: part, allowedMentions: { parse: [] } });
+        }
         if (doc) {
             await channel.send(`<@${member.id}>, please upload your ${doc} in this channel so HR can review it.`);
         }
@@ -299,6 +303,41 @@ export function leaveSpan(startAt, endAt, half) {
         return formatDuration(startAt, endAt);
     return `${formatDateInTz(startAt)}, ${half.start}–${half.end}`;
 }
+/** Discord caps an embed field value at 1024 chars; an over-long value makes addFields throw. */
+export const EMBED_FIELD_MAX = 1024;
+const MESSAGE_MAX = 2000;
+const CLIP_NOTE = "… (full reason below)";
+/** Fit text into an embed field (never empty, never over `max`). */
+export function clipField(text, max = EMBED_FIELD_MAX, note = "…") {
+    const t = text.trim();
+    if (!t)
+        return "—";
+    if (t.length <= max)
+        return t;
+    return t.slice(0, max - note.length).trimEnd() + note;
+}
+/** Messages that carry a reason too long for the card, each ≤ 2000 chars. Empty when it fits. */
+export function fullReasonMessages(reason) {
+    const t = reason.trim();
+    if (t.length <= EMBED_FIELD_MAX)
+        return [];
+    const head = "**Full reason:**\n";
+    const parts = [];
+    let rest = t;
+    let first = true;
+    while (rest.length > 0) {
+        const room = MESSAGE_MAX - (first ? head.length : 0);
+        let cut = rest.length <= room ? rest.length : rest.lastIndexOf("\n", room);
+        if (cut <= room / 2)
+            cut = rest.length <= room ? rest.length : rest.lastIndexOf(" ", room);
+        if (cut <= room / 2)
+            cut = room;
+        parts.push((first ? head : "") + rest.slice(0, cut));
+        rest = rest.slice(cut).replace(/^\s+/, "");
+        first = false;
+    }
+    return parts;
+}
 /** The private HR leave ticket's card. A half day reads "Half-day leave 13:00–16:00" with the date and window. */
 export function leaveTicketEmbed(id, userId, title, startAt, endAt, reason, half) {
     const embed = new EmbedBuilder()
@@ -306,11 +345,11 @@ export function leaveTicketEmbed(id, userId, title, startAt, endAt, reason, half
         .setColor(0xfaa61a);
     if (half) {
         embed
-            .addFields({ name: "Member", value: `<@${userId}>`, inline: true }, { name: "Date", value: formatDateInTz(startAt), inline: true }, { name: "Window (IST)", value: `${half.start}–${half.end}`, inline: true }, { name: "Reason", value: reason })
+            .addFields({ name: "Member", value: `<@${userId}>`, inline: true }, { name: "Date", value: formatDateInTz(startAt), inline: true }, { name: "Window (IST)", value: `${half.start}–${half.end}`, inline: true }, { name: "Reason", value: clipField(reason, EMBED_FIELD_MAX, CLIP_NOTE) })
             .setDescription("Half day: only this window is excused. The rest of the day is a normal working day.");
     }
     else {
-        embed.addFields({ name: "Member", value: `<@${userId}>`, inline: true }, { name: "From", value: formatInTz(startAt), inline: true }, { name: "To", value: formatInTz(endAt), inline: true }, { name: "Reason", value: reason });
+        embed.addFields({ name: "Member", value: `<@${userId}>`, inline: true }, { name: "From", value: formatInTz(startAt), inline: true }, { name: "To", value: formatInTz(endAt), inline: true }, { name: "Reason", value: clipField(reason, EMBED_FIELD_MAX, CLIP_NOTE) });
     }
     return embed.setFooter({ text: "HR: approve or reject below" }).setTimestamp(new Date());
 }

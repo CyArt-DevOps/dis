@@ -7,6 +7,7 @@ import { finalizeDecision } from "../interactions/leave.js";
 import { HALF_DAY_STARTS, halfDayEnd } from "../lib/halfDay.js";
 import {
   checkHalfDayRequest,
+  clipField,
   createLeaveRequest,
   leaveSpan,
   leaveTitle,
@@ -147,7 +148,7 @@ export const leave: SlashCommand = {
       for (const r of rows) {
         embed.addFields({
           name: `#${r.id} · ${leaveTitle(r)} · ${r.status}`,
-          value: `${spanOf(r)}\n${r.reason}`,
+          value: `${spanOf(r)}\n${clipField(r.reason, 200)}`,
         });
       }
       await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -165,16 +166,24 @@ export const leave: SlashCommand = {
         await interaction.reply({ content: "No pending leave requests.", flags: MessageFlags.Ephemeral });
         return;
       }
+      // Embeds cap at 6000 chars in total: show the oldest 10 with short reasons.
+      const shown = rows.slice(0, 10);
       const embed = new EmbedBuilder().setTitle("Pending leave").setColor(0xfaa61a);
-      for (const r of rows) {
+      for (const r of shown) {
         embed.addFields({
           name: `#${r.id} · ${leaveTitle(r)} · <@${r.userId}>`,
-          value: `${spanOf(r)}\n${r.reason}${r.documentUrl ? `\n[document](${r.documentUrl})` : ""}`,
+          value: clipField(
+            `${spanOf(r)}\n${clipField(r.reason, 120)}${r.documentUrl ? `\n[document](${r.documentUrl})` : ""}`
+          ),
         });
       }
+      const more =
+        rows.length > shown.length
+          ? ` Showing the oldest ${shown.length} of ${rows.length}${rows.length >= 20 ? "+" : ""}.`
+          : "";
       await interaction.reply({
         embeds: [embed],
-        content: "Approve/Reject from the **#leave-approvals** channel.",
+        content: `Approve/Reject from the **#leave-approvals** channel.${more}`,
         flags: MessageFlags.Ephemeral,
       });
       return;
